@@ -1,0 +1,17 @@
+name: env-gen
+on:
+  push:
+    paths: ['env-gen/**', '.github/workflows/env-gen.yml']
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: env-gen/go.mod }
+      - run: cd env-gen && go test ./... && ./build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: env-gen-linux
+          path: env-gen/dist/*

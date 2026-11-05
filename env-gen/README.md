@@ -35,3 +35,16 @@ Secrets typed into the TUI are never written to a saved template (a `{{prompt:KE
 Existing outputs are skipped unless `-force`. `-dry-run` prints to stdout and never writes to the vault.
 
 Test with a fake vault via `BW_BIN=/path/to/fake-bw`. Unit tests: `go test ./...`.
+
+## Standalone binary (Linux VM)
+
+`./build.sh` (needs only Go) writes static `dist/env-gen-linux-{amd64,arm64}` binaries; CI also uploads them as a workflow artifact. Copy one to the VM and run it, no runtime or Go needed there.
+
+The VM does need the Bitwarden CLI (`bw`), which is a single downloadable binary from bitwarden.com/download. Then:
+
+```
+bw config server https://vault.example.com
+bw login
+export BW_SESSION="$(bw unlock --raw)"
+./env-gen new
+```

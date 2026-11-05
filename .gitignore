@@ -2,3 +2,4 @@ bin/
 *.env
 !*.env.template
 .env
+dist/

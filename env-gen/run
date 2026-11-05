@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Builds on demand (when sources are newer than the binary), then execs.
+set -euo pipefail
+dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+bin="$dir/bin/env-gen"
+if [[ ! -x "$bin" || -n "$(find "$dir" -name '*.go' -newer "$bin" -print -quit)" ]]; then
+  (cd "$dir" && go build -o "$bin" .)
+fi
+exec "$bin" "$@"

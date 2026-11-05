@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Launcher: ./tools list | ./tools <name> [args...]
+# A tool is any top-level directory containing an executable `run` file.
+# An optional one-line `DESCRIPTION` file is shown by `list`.
+set -euo pipefail
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+list() {
+  for d in "$root"/*/; do
+    [[ -x "$d/run" ]] || continue
+    name="$(basename "$d")"
+    desc="$(head -n1 "$d/DESCRIPTION" 2>/dev/null || true)"
+    printf '  %-16s %s\n' "$name" "$desc"
+  done
+}
+
+case "${1:-}" in
+  ""|-h|--help|help) echo "usage: tools <name> [args...]"; echo "available tools:"; list ;;
+  list) list ;;
+  *)
+    name="$1"; shift
+    [[ -x "$root/$name/run" ]] || { echo "unknown tool: $name" >&2; list >&2; exit 1; }
+    exec "$root/$name/run" "$@"
+    ;;
+esac

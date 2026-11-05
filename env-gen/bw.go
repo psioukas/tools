@@ -181,3 +181,13 @@ func (b *Bw) create(it *bwItem) error {
 	}
 	return nil
 }
+
+// Search lists vault items matching term (for the TUI picker).
+func (b *Bw) Search(term string) ([]bwItem, error) {
+	out, err := b.run("", "list", "items", "--search", term)
+	if err != nil {
+		return nil, err
+	}
+	var items []bwItem
+	return items, json.Unmarshal(out, &items)
+}

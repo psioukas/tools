@@ -44,3 +44,20 @@ func TestRenderErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderLines(t *testing.T) {
+	f := &fake{stored: map[string]string{}}
+	out, err := renderLines([]string{"A=plain", "B=has space", "C={{vw:db}}", "D=pa$$ #x"}, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "A=plain\nB=\"has space\"\nC=s3cret\nD=\"pa$$ #x\"\n"
+	if out != want {
+		t.Fatalf("got %q want %q", out, want)
+	}
+	for _, bad := range []string{"noequals", "1BAD=x", "A B=x"} {
+		if _, err := renderLines([]string{bad}, f); err == nil {
+			t.Errorf("expected error for %q", bad)
+		}
+	}
+}

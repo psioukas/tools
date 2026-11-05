@@ -16,4 +16,4 @@ Personal automations. Each top-level directory is one self-contained tool.
 
 | Tool | What it does |
 |------|--------------|
-| [env-gen](env-gen/) | Render `.env` files from templates, reading/generating secrets in Vaultwarden via `bw` |
+| [env-gen](env-gen/) | Render or interactively build `.env` files, reading/generating secrets in Vaultwarden via `bw` |

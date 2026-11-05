@@ -9,6 +9,20 @@ export BW_SESSION="$(bw unlock --raw)"   # bw must point at your Vaultwarden ser
 ./tools env-gen -force app/
 ```
 
+## Without a template
+
+```
+# inline: same placeholders, values auto-quoted when needed
+./tools env-gen -o app/.env -set 'DB_PASS={{vwgen:myapp db/password:24}}' -set 'NAME=hello world'
+
+# interactive TUI: pick a source per variable (literal, hidden secret, generate,
+# vault read, vault read-or-generate-and-store, with a vault item search picker),
+# review the plan, optionally save it as a reusable .env.template
+./tools env-gen new -o app/.env
+```
+
+Secrets typed into the TUI are never written to a saved template (a `{{prompt:KEY}}` is saved instead).
+
 ## Placeholders
 
 | Placeholder | Meaning |

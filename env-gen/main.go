@@ -87,14 +87,18 @@ func outputPath(tpl string) string {
 	return filepath.Join(dir, base)
 }
 
-func main() {
-	force := flag.Bool("force", false, "overwrite existing output files")
-	dry := flag.Bool("dry-run", false, "render to stdout, write nothing, store nothing in the vault")
-	flag.Usage = func() {
-		fmt.Fprint(os.Stderr, `usage: env-gen [flags] <template|dir>...
+type multiFlag []string
+
+func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
+func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
+
+const usage = `usage:
+  env-gen [flags] <template|dir>...        render *.env.template files
+  env-gen [flags] -set KEY=VALUE ... [-o FILE]   build an env with no template
+  env-gen new [-o FILE] [-force] [-dry-run]      interactive builder (TUI)
 
 Renders each *.env.template (directories are searched recursively) to the
-sibling .env file (mode 0600). Placeholders:
+sibling .env file (mode 0600). Placeholders (also valid in -set values):
 
   {{gen:N[:alnum|hex|symbols]}}      random value
   {{prompt:Label}}                   ask interactively
@@ -105,15 +109,58 @@ Needs the bw CLI logged in to your Vaultwarden server and
 BW_SESSION exported (export BW_SESSION="$(bw unlock --raw)").
 
 flags:
-`)
-		flag.PrintDefaults()
+`
+
+// writeEnv writes content to path (0600), honouring -force / -dry-run.
+func writeEnv(path, content string, force, dry bool) error {
+	if dry {
+		fmt.Printf("# --- %s ---\n%s", path, content)
+		return nil
 	}
-	flag.Parse()
-	if flag.NArg() == 0 {
-		flag.Usage()
+	if _, err := os.Stat(path); err == nil && !force {
+		fmt.Fprintln(os.Stderr, "  skipped: exists (use -force)")
+		return nil
+	}
+	return os.WriteFile(path, []byte(content), 0o600)
+}
+
+func main() {
+	args := os.Args[1:]
+	isNew := len(args) > 0 && args[0] == "new"
+	if isNew {
+		args = args[1:]
+	}
+	fs := flag.NewFlagSet("env-gen", flag.ExitOnError)
+	force := fs.Bool("force", false, "overwrite existing output files")
+	dry := fs.Bool("dry-run", false, "render to stdout, write nothing, store nothing in the vault")
+	outFile := fs.String("o", ".env", "output file for -set / new")
+	var sets multiFlag
+	fs.Var(&sets, "set", "KEY=VALUE entry (repeatable); value may contain placeholders")
+	fs.Usage = func() { fmt.Fprint(os.Stderr, usage); fs.PrintDefaults() }
+	fs.Parse(args)
+
+	res := &cliResolver{bw: NewBw(), in: bufio.NewReader(os.Stdin), dryRun: *dry}
+
+	switch {
+	case isNew:
+		os.Exit(runNew(res, *outFile, *force, *dry))
+	case len(sets) > 0:
+		fmt.Fprintf(os.Stderr, "(inline) -> %s\n", *outFile)
+		content, err := renderLines(sets, res)
+		if err == nil {
+			err = writeEnv(*outFile, content, *force, *dry)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "  error:", err)
+			os.Exit(1)
+		}
+		return
+	case fs.NArg() == 0:
+		fs.Usage()
 		os.Exit(2)
 	}
-	tpls, err := findTemplates(flag.Args())
+
+	tpls, err := findTemplates(fs.Args())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
@@ -122,25 +169,15 @@ flags:
 		fmt.Fprintln(os.Stderr, "no templates found")
 		os.Exit(1)
 	}
-	res := &cliResolver{bw: NewBw(), in: bufio.NewReader(os.Stdin), dryRun: *dry}
 	failed := 0
 	for _, t := range tpls {
 		out := outputPath(t)
 		fmt.Fprintf(os.Stderr, "%s -> %s\n", t, out)
-		if _, err := os.Stat(out); err == nil && !*force && !*dry {
-			fmt.Fprintln(os.Stderr, "  skipped: exists (use -force)")
-			continue
-		}
 		src, err := os.ReadFile(t)
 		if err == nil {
 			var rendered string
-			rendered, err = Render(string(src), res)
-			if err == nil {
-				if *dry {
-					fmt.Printf("# --- %s ---\n%s\n", out, rendered)
-				} else {
-					err = os.WriteFile(out, []byte(rendered), 0o600)
-				}
+			if rendered, err = Render(string(src), res); err == nil {
+				err = writeEnv(out, rendered, *force, *dry)
 			}
 		}
 		if err != nil {

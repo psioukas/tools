@@ -96,6 +96,7 @@ const usage = `usage:
   env-gen [flags] <template|dir>...        render *.env.template files
   env-gen [flags] -set KEY=VALUE ... [-o FILE]   build an env with no template
   env-gen new [-o FILE] [-force] [-dry-run]      interactive builder (TUI)
+  env-gen setup                                  guided bw setup: server URL, login, unlock, connection test
   env-gen push [-item NAME] <.env>               store an existing .env in the vault + write a template
   env-gen pull [-o FILE] <vault item>            write a .env from a vault item's custom fields
 
@@ -134,6 +135,8 @@ func main() {
 			os.Exit(runPush(args[1:]))
 		case "pull":
 			os.Exit(runPull(args[1:]))
+		case "setup":
+			os.Exit(runSetup())
 		}
 	}
 	isNew := len(args) > 0 && args[0] == "new"

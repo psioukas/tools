@@ -11,8 +11,8 @@ import (
 )
 
 func newForm(groups ...*huh.Group) *huh.Form {
-	f := huh.NewForm(groups...)
-	if os.Getenv("ACCESSIBLE") != "" { // plain line prompts, used for scripted tests
+	f := huh.NewForm(groups...).WithOutput(os.Stderr) // keep stdout clean for eval "$(env-gen setup)"
+	if os.Getenv("ACCESSIBLE") != "" {                // plain line prompts, used for scripted tests
 		f = f.WithAccessible(true)
 	}
 	return f

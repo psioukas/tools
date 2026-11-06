@@ -23,6 +23,13 @@ export BW_SESSION="$(bw unlock --raw)"   # bw must point at your Vaultwarden ser
 
 Secrets typed into the TUI are never written to a saved template (a `{{prompt:KEY}}` is saved instead).
 
+## Guided setup
+
+```
+eval "$(./env-gen setup)"
+```
+Checks that `bw` is installed, asks for your Vaultwarden URL (runs `bw config server`; offers to log out if you're changing server), runs `bw login` if needed (email, password and 2FA are handled by `bw` itself), unlocks with a hidden master-password prompt (passed to `bw` via an environment variable, not the command line), syncs, and confirms the connection. All messages go to stderr; stdout carries only `export BW_SESSION=...`, so wrapping it in `eval` leaves the session in your shell. Without `eval` you still get the setup, but the session is not kept.
+
 ## Moving existing .env files in and out of the vault
 
 ```

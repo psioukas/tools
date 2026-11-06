@@ -132,54 +132,95 @@ func (b *Bw) Read(item, field string) (string, error) {
 	return fieldOf(it, field)
 }
 
-// Store creates the item (or adds the field to it) holding value.
+type kv struct{ Key, Value string }
+
+// Store sets one field of an item (password/username/notes are the login/notes
+// fields; anything else is a hidden custom field), creating the item if needed.
 func (b *Bw) Store(item, field, value string) error {
-	it, err := b.get(item)
-	if errors.Is(err, errNotFound) {
-		it = &bwItem{Type: 1, Name: item}
-		it.Login = &struct {
-			Username string `json:"username"`
-			Password string `json:"password"`
-			URIs     []struct {
-				URI string `json:"uri"`
-			} `json:"uris"`
-		}{}
-		setField(it, field, value)
-		return b.create(it)
-	}
-	if err != nil {
+	return b.StoreFields(item, []kv{{field, value}}, true, true)
+}
+
+// StoreFields creates the item or edits it in place. The existing item is
+// edited as raw JSON so attributes this tool doesn't model (folder, URIs,
+// attachments, ...) are preserved. With overwrite=false, an existing field of
+// the same name is an error. special=false forces every key to be a custom field.
+func (b *Bw) StoreFields(item string, kvs []kv, overwrite, special bool) error {
+	if err := b.Ready(); err != nil {
 		return err
 	}
-	setField(it, field, value)
-	js, _ := json.Marshal(it)
-	_, err = b.run(base64.StdEncoding.EncodeToString(js), "edit", "item", it.ID)
+	var raw map[string]any
+	out, err := b.run("", "get", "item", item)
+	exists := err == nil
+	if err != nil && !errors.Is(err, errNotFound) {
+		return err
+	}
+	if exists {
+		if err := json.Unmarshal(out, &raw); err != nil {
+			return err
+		}
+	} else {
+		raw = map[string]any{"type": 1, "name": item,
+			"login": map[string]any{"username": "", "password": "", "uris": []any{}}}
+	}
+	fields, _ := raw["fields"].([]any)
+	var clash []string
+	for _, p := range kvs {
+		if special && (p.Key == "password" || p.Key == "username" || p.Key == "notes") {
+			continue
+		}
+		idx := -1
+		for i, f := range fields {
+			if m, ok := f.(map[string]any); ok && m["name"] == p.Key {
+				idx = i
+			}
+		}
+		if idx >= 0 {
+			if !overwrite {
+				clash = append(clash, p.Key)
+				continue
+			}
+			fields[idx].(map[string]any)["value"] = p.Value
+		} else {
+			fields = append(fields, map[string]any{"name": p.Key, "value": p.Value, "type": 1})
+		}
+	}
+	if len(clash) > 0 {
+		return fmt.Errorf("item %q already has fields %s (use -force to overwrite)", item, strings.Join(clash, ", "))
+	}
+	for _, p := range kvs {
+		if !special {
+			break
+		}
+		login, _ := raw["login"].(map[string]any)
+		switch p.Key {
+		case "password", "username":
+			if login == nil {
+				return fmt.Errorf("item %q has no login", item)
+			}
+			login[p.Key] = p.Value
+		case "notes":
+			raw["notes"] = p.Value
+		}
+	}
+	raw["fields"] = fields
+	js, _ := json.Marshal(raw)
+	enc := base64.StdEncoding.EncodeToString(js)
+	delete(b.cache, item)
+	if exists {
+		_, err = b.run(enc, "edit", "item", fmt.Sprint(raw["id"]))
+	} else {
+		_, err = b.run(enc, "create", "item")
+	}
 	return err
 }
 
-func setField(it *bwItem, field, value string) {
-	switch field {
-	case "password":
-		if it.Login != nil {
-			it.Login.Password = value
-		}
-	case "notes":
-		it.Notes = value
-	default:
-		it.Fields = append(it.Fields, bwField{Name: field, Value: value, Type: 1})
-	}
-}
-
-func (b *Bw) create(it *bwItem) error {
-	js, _ := json.Marshal(it)
-	out, err := b.run(base64.StdEncoding.EncodeToString(js), "create", "item")
+// Fields returns an item's custom fields in vault order.
+func (b *Bw) Fields(item string) ([]bwField, error) {
+	it, err := b.get(item)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var created bwItem
-	if json.Unmarshal(out, &created) == nil {
-		b.cache[it.Name] = &created
-	}
-	return nil
+	return it.Fields, nil
 }
 
 // Search lists vault items matching term (for the TUI picker).

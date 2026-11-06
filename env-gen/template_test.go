@@ -61,3 +61,17 @@ func TestRenderLines(t *testing.T) {
 		}
 	}
 }
+
+type spacey struct{ fake }
+
+func (spacey) VW(i, f string) (string, error) { return "a b#c", nil }
+
+func TestRenderTemplateQuotes(t *testing.T) {
+	out, err := RenderTemplate("A={{vw:x}}\nB=pre-{{vw:x}}\n# {{gen:1}}\n", &spacey{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out, "A=\"a b#c\"\nB=pre-a b#c\n") {
+		t.Fatalf("got %q", out)
+	}
+}

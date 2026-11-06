@@ -23,6 +23,16 @@ export BW_SESSION="$(bw unlock --raw)"   # bw must point at your Vaultwarden ser
 
 Secrets typed into the TUI are never written to a saved template (a `{{prompt:KEY}}` is saved instead).
 
+## Moving existing .env files in and out of the vault
+
+```
+./tools env-gen push -item myapp app/.env   # each variable -> hidden custom field of vault item "myapp";
+                                            # writes app/.env.template with {{vw:myapp/KEY}} lines
+./tools env-gen pull -o app/.env myapp      # rebuild a .env straight from a vault item
+```
+
+`push` refuses to overwrite fields that already exist unless `-force`, and edits existing items in place so other item data (folder, URIs, attachments) is kept. Item defaults to the project directory name. The plaintext `.env` is left alone; delete it yourself once you've checked with `pull`.
+
 ## Placeholders
 
 | Placeholder | Meaning |

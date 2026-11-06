@@ -37,3 +37,28 @@ func renderLines(lines []string, r Resolver) (string, error) {
 	}
 	return sb.String(), nil
 }
+
+var wholePlaceholderLine = regexp.MustCompile(`^(\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*=)(\{\{[^{}]+\}\})\s*$`)
+
+// RenderTemplate renders template text line by line. When a line's whole value
+// is a single placeholder, the resolved value is quoted if a dotenv parser
+// would otherwise mangle it (spaces, #, $, quotes). Mixed values are left as written.
+func RenderTemplate(src string, r Resolver) (string, error) {
+	lines := strings.Split(src, "\n")
+	for i, l := range lines {
+		if m := wholePlaceholderLine.FindStringSubmatch(l); m != nil {
+			v, err := Render(m[2], r)
+			if err != nil {
+				return "", err
+			}
+			lines[i] = m[1] + quoteIfNeeded(v)
+			continue
+		}
+		v, err := Render(l, r)
+		if err != nil {
+			return "", err
+		}
+		lines[i] = v
+	}
+	return strings.Join(lines, "\n"), nil
+}

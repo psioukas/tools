@@ -96,6 +96,8 @@ const usage = `usage:
   env-gen [flags] <template|dir>...        render *.env.template files
   env-gen [flags] -set KEY=VALUE ... [-o FILE]   build an env with no template
   env-gen new [-o FILE] [-force] [-dry-run]      interactive builder (TUI)
+  env-gen push [-item NAME] <.env>               store an existing .env in the vault + write a template
+  env-gen pull [-o FILE] <vault item>            write a .env from a vault item's custom fields
 
 Renders each *.env.template (directories are searched recursively) to the
 sibling .env file (mode 0600). Placeholders (also valid in -set values):
@@ -126,6 +128,14 @@ func writeEnv(path, content string, force, dry bool) error {
 
 func main() {
 	args := os.Args[1:]
+	if len(args) > 0 {
+		switch args[0] {
+		case "push":
+			os.Exit(runPush(args[1:]))
+		case "pull":
+			os.Exit(runPull(args[1:]))
+		}
+	}
 	isNew := len(args) > 0 && args[0] == "new"
 	if isNew {
 		args = args[1:]
@@ -176,7 +186,7 @@ func main() {
 		src, err := os.ReadFile(t)
 		if err == nil {
 			var rendered string
-			if rendered, err = Render(string(src), res); err == nil {
+			if rendered, err = RenderTemplate(string(src), res); err == nil {
 				err = writeEnv(out, rendered, *force, *dry)
 			}
 		}

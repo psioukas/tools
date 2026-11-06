@@ -109,7 +109,7 @@ func runNew(res *cliResolver, out string, force, dry bool) int {
 			tplLines = append(tplLines, key+"="+tplValue)
 			goto more
 		case "gen":
-			n, cs := "32", "alnum"
+			n, cs := genDefaults()
 			if err = newForm(huh.NewGroup(
 				huh.NewInput().Title("Length").Value(&n).Validate(validLen),
 				huh.NewSelect[string]().Title("Charset").Options(
@@ -129,7 +129,7 @@ func runNew(res *cliResolver, out string, force, dry bool) int {
 				opts[i] = huh.NewOption(f, f)
 			}
 			fs := []huh.Field{huh.NewSelect[string]().Title("Field").Options(opts...).Value(&field)}
-			n, cs := "32", "alnum"
+			n, cs := genDefaults()
 			if source == "vwgen" {
 				// a new item has no custom fields to pick; allow typing any field name
 				fs = []huh.Field{huh.NewInput().Title("Field (password, notes, or custom name)").Value(&field)}

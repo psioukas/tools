@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -47,7 +48,7 @@ func runSetup() int {
 
 	// 1. server URL
 	say("bw status: %s (server: %s)", st.Status, orNone(st.ServerURL))
-	server := st.ServerURL
+	server := cfg.Get("vault.server", st.ServerURL)
 	if server == "https://bitwarden.com" || server == "https://vault.bitwarden.com" {
 		server = ""
 	}
@@ -144,7 +145,23 @@ func runSetup() int {
 	_ = json.Unmarshal(out, &folders)
 	say("OK: connected to %s as %s (%d folders visible)", server, orNone(st.UserEmail), len(folders))
 
-	// 5. hand the session to the shell
+	// 5. remember the settings (never the session or password)
+	cfg.Set("vault.server", server)
+	if st.UserEmail != "" {
+		cfg.Set("vault.email", st.UserEmail)
+	}
+	if p, err := exec.LookPath(bw.Bin); err == nil {
+		if abs, err := filepath.Abs(p); err == nil {
+			cfg.Set("vault.bw", abs)
+		}
+	}
+	if err := cfg.Save(); err != nil {
+		say("warning: could not save config: %v", err)
+	} else {
+		say("settings saved to %s", cfg.Path)
+	}
+
+	// 6. hand the session to the shell
 	fmt.Printf("export BW_SESSION='%s'\n", bw.Session)
 	if fi, err := os.Stdout.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
 		say("\nTo keep this session in your shell, run:  eval \"$(env-gen setup)\"")

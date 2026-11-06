@@ -44,7 +44,7 @@ type Bw struct {
 func NewBw() *Bw {
 	bin := os.Getenv("BW_BIN")
 	if bin == "" {
-		bin = "bw"
+		bin = cfg.Get("vault.bw", "bw")
 	}
 	return &Bw{Bin: bin, Session: os.Getenv("BW_SESSION"), cache: map[string]*bwItem{}}
 }

@@ -30,6 +30,34 @@ eval "$(./env-gen setup)"
 ```
 Checks that `bw` is installed, asks for your Vaultwarden URL (runs `bw config server`; offers to log out if you're changing server), runs `bw login` if needed (email, password and 2FA are handled by `bw` itself), unlocks with a hidden master-password prompt (passed to `bw` via an environment variable, not the command line), syncs, and confirms the connection. All messages go to stderr; stdout carries only `export BW_SESSION=...`, so wrapping it in `eval` leaves the session in your shell. Without `eval` you still get the setup, but the session is not kept.
 
+## Config file
+
+`setup` saves your settings to a file in your user config directory, like `~/.aws/config` or git's config:
+
+| OS | Path |
+|---|---|
+| Linux / macOS | `$XDG_CONFIG_HOME/env-gen/config` (default `~/.config/env-gen/config`) |
+| Windows | `%AppData%\env-gen\config` |
+
+Override with `ENV_GEN_CONFIG=/path/to/file`. The directory is created `0700` and the file `0600`. It holds settings only, never the master password or `BW_SESSION`.
+
+```
+[vault]
+server = https://vault.example.com
+email = me@example.com
+bw = /usr/local/bin/bw
+[defaults]
+output = .env
+length = 32
+charset = alnum
+```
+
+```
+env-gen config list | path | get KEY | set KEY VALUE | unset KEY
+```
+
+Precedence: command-line flags, then `BW_BIN`, then the config file, then built-in defaults. Everything (render, `-set`, `new`, `push`, `pull`, `setup`, `config`) is one binary; the only external dependency is the Bitwarden CLI.
+
 ## Moving existing .env files in and out of the vault
 
 ```

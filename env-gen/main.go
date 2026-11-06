@@ -96,6 +96,7 @@ const usage = `usage:
   env-gen [flags] <template|dir>...        render *.env.template files
   env-gen [flags] -set KEY=VALUE ... [-o FILE]   build an env with no template
   env-gen new [-o FILE] [-force] [-dry-run]      interactive builder (TUI)
+  env-gen config [list|path|get K|set K V|unset K]   settings file in your user config dir
   env-gen setup                                  guided bw setup: server URL, login, unlock, connection test
   env-gen push [-item NAME] <.env>               store an existing .env in the vault + write a template
   env-gen pull [-o FILE] <vault item>            write a .env from a vault item's custom fields
@@ -129,8 +130,15 @@ func writeEnv(path, content string, force, dry bool) error {
 
 func main() {
 	args := os.Args[1:]
+	if c, err := LoadConfig(); err != nil {
+		fmt.Fprintln(os.Stderr, "warning: ignoring config:", err)
+	} else {
+		cfg = c
+	}
 	if len(args) > 0 {
 		switch args[0] {
+		case "config":
+			os.Exit(runConfig(args[1:]))
 		case "push":
 			os.Exit(runPush(args[1:]))
 		case "pull":
@@ -146,7 +154,7 @@ func main() {
 	fs := flag.NewFlagSet("env-gen", flag.ExitOnError)
 	force := fs.Bool("force", false, "overwrite existing output files")
 	dry := fs.Bool("dry-run", false, "render to stdout, write nothing, store nothing in the vault")
-	outFile := fs.String("o", ".env", "output file for -set / new")
+	outFile := fs.String("o", cfg.Get("defaults.output", ".env"), "output file for -set / new")
 	var sets multiFlag
 	fs.Var(&sets, "set", "KEY=VALUE entry (repeatable); value may contain placeholders")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage); fs.PrintDefaults() }

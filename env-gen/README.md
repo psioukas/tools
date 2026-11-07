@@ -72,6 +72,42 @@ env-gen edit -set PORT=4000 -set 'TOKEN={{vwgen:myapp/TOKEN:32}}' -unset OLD_VAR
 
 Comments, blank lines, ordering and `export` prefixes are preserved. Changing a value offers the same sources as `new` (literal, hidden secret, generate, vault read, vault read-or-generate), and the current value is prefilled for literals. Secret-looking values are masked in the menu. Before saving you see a `+ ~ -` summary of changed variable names; the previous file is kept as `FILE.bak` (0600), and the interactive save offers the same "back up ALL variables to a vault item" step as `new`. In scripted mode the backup only happens with `-backup ITEM`. `-dry-run` prints the result instead of writing.
 
+## Web UI (behind your HTTPS reverse proxy)
+
+`env-gen ui` serves an editor you can open from any browser, such as an Android tablet: browse projects, open a `.env` or `.env.example`, change / rename / delete / add variables, pick a source per variable (typed, generated, vault read, vault read-or-generate), preview the diff, save, create `.env` from an example, and back up everything to a vault item. Secret-looking values are never sent to the browser until you press Reveal. The pages are embedded in the binary.
+
+```
+env-gen ui init      # once: creates a 2FA (TOTP) secret; add the key to an authenticator app
+env-gen ui -root ~/projects -host vault.example.com -trust-proxy      # listens on 127.0.0.1:8765
+```
+
+Reverse proxy examples (TLS terminates there; the UI refuses anything that isn't https via the proxy):
+
+```
+# Caddy
+vault.example.com {
+    reverse_proxy 127.0.0.1:8765
+}
+
+# nginx (inside your TLS server block)
+location / {
+    proxy_pass http://127.0.0.1:8765;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $remote_addr;   # overwrite, don't append client-supplied values
+}
+```
+
+Run it under systemd or tmux. For development without a proxy: `env-gen ui -insecure-http` (loopback only).
+
+**Security model.** This puts a path to your vault on a public URL, so it is locked down accordingly; still, treat it as sensitive and consider also restricting it by IP or VPN at the proxy.
+- **Login = master password + authenticator code.** The code is checked first, and each code can be used only once. Failed logins are rate-limited (5 per IP, 20 overall, then lockouts of 10 minutes doubling up to 24h).
+- **One session at a time**, held in server memory only. The vault session key never reaches the browser and is never written to disk by the UI; idle timeout 15 minutes (`-idle`), 8 hours maximum. The cookie is `__Host-` prefixed, `Secure`, `HttpOnly`, `SameSite=Strict`, and state-changing requests also need a per-session CSRF token and a same-origin check.
+- **Strict CSP**, no inline scripts, `no-store` caching, HSTS, and allowed `-host` names only (blocks DNS rebinding).
+- **File access is sandboxed** to `-root`: only `.env`-style names, no `..`, no symlink escapes, files written 0600 with the previous version kept as `.bak`.
+- The server needs the Bitwarden CLI logged in (`env-gen setup` on the VM first). The UI ignores the on-disk session cache and `BW_SESSION`: only a UI login can open the vault there.
+- Not built into the UI (use the CLI): `keys` management, `push`/`pull`, offline mode, setup.
+
 ## Shell auto-completion
 
 ```

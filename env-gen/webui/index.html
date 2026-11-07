@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>env-gen</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>env-gen</h1>
+  <span id="vault" class="pill" hidden></span>
+  <button id="logout" class="ghost" hidden>Log out</button>
+</header>
+<main>
+  <section id="login" class="card" hidden>
+    <h2>Unlock</h2>
+    <form id="loginform" autocomplete="off">
+      <label>Vaultwarden master password
+        <input id="pw" type="password" autocomplete="current-password" required>
+      </label>
+      <label>Authenticator code
+        <input id="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required>
+      </label>
+      <button type="submit" class="primary">Unlock</button>
+      <p id="loginerr" class="err" role="alert"></p>
+    </form>
+  </section>
+
+  <div id="app" hidden>
+    <nav id="projects" aria-label="Projects"></nav>
+    <section id="editor" class="card">
+      <p class="muted">Choose a file on the left.</p>
+    </section>
+  </div>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

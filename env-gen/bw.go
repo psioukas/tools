@@ -41,11 +41,15 @@ type Bw struct {
 	cache   map[string]*bwItem
 }
 
-func NewBw() *Bw {
-	bin := os.Getenv("BW_BIN")
-	if bin == "" {
-		bin = cfg.Get("vault.bw", "bw")
+func bwBin() string {
+	if bin := os.Getenv("BW_BIN"); bin != "" {
+		return bin
 	}
+	return cfg.Get("vault.bw", "bw")
+}
+
+func NewBw() *Bw {
+	bin := bwBin()
 	sess := os.Getenv("BW_SESSION")
 	if sess == "" {
 		sess = loadSession()

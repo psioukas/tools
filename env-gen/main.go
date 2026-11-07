@@ -107,6 +107,7 @@ const usage = `usage:
   env-gen [flags] -set KEY=VALUE ... [-o FILE]   build an env with no template
   env-gen new [-o FILE] [-force] [-dry-run]      interactive builder (TUI)
   env-gen edit [FILE] [-set K=V]... [-unset K]...   edit an existing .env (menu, or flags to script it)
+  env-gen ui init | ui -root DIR -host H -trust-proxy   web UI (behind your HTTPS reverse proxy)
   env-gen completion bash|zsh|fish|install       shell auto-completion
   env-gen unlock | lock                          unlock the vault (session cached briefly) / clear it
   env-gen keys list|show|rm|rename|rotate ...    manage the fields stored in a vault item
@@ -158,6 +159,8 @@ func main() {
 			os.Exit(runPush(args[1:]))
 		case "pull":
 			os.Exit(runPull(args[1:]))
+		case "ui":
+			os.Exit(runUI(args[1:]))
 		case "completion":
 			os.Exit(runCompletion(args[1:]))
 		case "__complete":

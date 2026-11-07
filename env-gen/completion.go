@@ -105,7 +105,6 @@ func installCompletion() int {
 	return 0
 }
 
-
 const bashCompletion = `# bash completion for env-gen   (source <(env-gen completion bash))
 _env_gen() {
   local cur="${COMP_WORDS[COMP_CWORD]}" sub="${COMP_WORDS[1]}" sub2="${COMP_WORDS[2]}"

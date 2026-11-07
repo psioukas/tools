@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -72,95 +74,243 @@ func pickVaultItem(bw *Bw) (item string, fields []string, err error) {
 	return
 }
 
-// runNew is the interactive builder. It assembles template lines, shows them
-// (never resolved secrets), optionally saves them as a template, then renders.
-func runNew(res *cliResolver, out string, force, dry bool) int {
-	var lines, tplLines []string
-	for {
-		var key, source string
-		err := newForm(huh.NewGroup(
-			huh.NewInput().Title("Variable name").Value(&key).Validate(validKey),
-			huh.NewSelect[string]().Title("Value source").Options(
-				huh.NewOption("Literal value", "literal"),
-				huh.NewOption("Literal secret (hidden input)", "secret"),
-				huh.NewOption("Generate random", "gen"),
-				huh.NewOption("Read from Vaultwarden", "vw"),
-				huh.NewOption("Vaultwarden: read, or generate + store if missing", "vwgen"),
-			).Value(&source),
-		)).Run()
-		if err != nil {
-			return abort(err)
+var secretKeyRe = regexp.MustCompile(`(?i)(pass(word|wd)?|secret|token|api[_-]?key|private[_-]?key|_key$|^key$|salt|jwt|credential)`)
+
+var exampleNames = []string{".env.example", ".env.sample", ".env.dist", "example.env", ".env.template.example"}
+
+func findExample() string {
+	for _, n := range exampleNames {
+		if st, err := os.Stat(n); err == nil && !st.IsDir() {
+			return n
 		}
-		var value string
-		switch source {
-		case "literal", "secret":
-			in := huh.NewInput().Title("Value").Value(&value).Validate(noPlaceholder)
-			if source == "secret" {
-				in = in.EchoMode(huh.EchoModePassword)
-			}
-			if err = newForm(huh.NewGroup(in)).Run(); err != nil {
-				return abort(err)
-			}
-			tplValue := quoteIfNeeded(value)
-			if source == "secret" {
-				tplValue = "{{prompt:" + key + "}}" // never write typed secrets into a template
-			}
-			lines = append(lines, key+"="+value) // quoted by renderLines
-			tplLines = append(tplLines, key+"="+tplValue)
-			goto more
-		case "gen":
+	}
+	return ""
+}
+
+func projectName() string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "project"
+	}
+	return filepath.Base(wd)
+}
+
+func charsetOptions() []huh.Option[string] {
+	return []huh.Option[string]{huh.NewOption("alphanumeric", "alnum"), huh.NewOption("hex", "hex"), huh.NewOption("with symbols", "symbols")}
+}
+
+// suggest returns the source runNew proposes for a variable from an example file.
+func suggest(key string) string {
+	if secretKeyRe.MatchString(key) {
+		return "vwgen"
+	}
+	return "keep"
+}
+
+// quickValue is the non-interactive value for a suggested source.
+func quickValue(key, example, project, source string) (value, tpl string) {
+	if source == "vwgen" {
+		n, cs := genDefaults()
+		v := fmt.Sprintf("{{vwgen:%s/%s:%s:%s}}", project, key, n, cs)
+		return v, v
+	}
+	return example, quoteIfNeeded(example)
+}
+
+// askValue prompts for the details of one variable and returns the value used
+// for the env line plus the value that goes into a saved template. project and
+// example are set when building from an example file.
+func askValue(res *cliResolver, key, source, project, example string) (value, tplValue string, err error) {
+	switch source {
+	case "keep":
+		return example, quoteIfNeeded(example), nil
+	case "literal", "secret":
+		value = example
+		in := huh.NewInput().Title("Value for " + key).Value(&value).Validate(noPlaceholder)
+		if source == "secret" {
+			value = ""
+			in = in.EchoMode(huh.EchoModePassword)
+		}
+		if err = newForm(huh.NewGroup(in)).Run(); err != nil {
+			return
+		}
+		tplValue = quoteIfNeeded(value)
+		if source == "secret" {
+			tplValue = "{{prompt:" + key + "}}" // never write typed secrets into a template
+		}
+		return
+	case "gen":
+		n, cs := genDefaults()
+		if err = newForm(huh.NewGroup(
+			huh.NewInput().Title("Length").Value(&n).Validate(validLen),
+			huh.NewSelect[string]().Title("Charset").Options(charsetOptions()...).Value(&cs),
+		)).Run(); err != nil {
+			return
+		}
+		value = fmt.Sprintf("{{gen:%s:%s}}", n, cs)
+		return value, value, nil
+	case "vw", "vwgen":
+		var item string
+		field := "password"
+		fields := []string{"password", "username", "uri", "notes"}
+		if source == "vwgen" && project != "" {
+			item, field = project, key
+		} else if item, fields, err = pickVaultItem(res.bw); err != nil {
+			return
+		}
+		var fs []huh.Field
+		if source == "vwgen" {
 			n, cs := genDefaults()
-			if err = newForm(huh.NewGroup(
+			if project != "" {
+				fs = append(fs, huh.NewInput().Title("Vault item").Value(&item))
+			}
+			fs = append(fs,
+				huh.NewInput().Title("Field (password, notes, or custom name)").Value(&field),
 				huh.NewInput().Title("Length").Value(&n).Validate(validLen),
-				huh.NewSelect[string]().Title("Charset").Options(
-					huh.NewOption("alphanumeric", "alnum"), huh.NewOption("hex", "hex"), huh.NewOption("with symbols", "symbols")).Value(&cs),
-			)).Run(); err != nil {
-				return abort(err)
+				huh.NewSelect[string]().Title("Charset").Options(charsetOptions()...).Value(&cs))
+			if err = newForm(huh.NewGroup(fs...)).Run(); err != nil {
+				return
 			}
-			value = fmt.Sprintf("{{gen:%s:%s}}", n, cs)
-		case "vw", "vwgen":
-			item, fields, perr := pickVaultItem(res.bw)
-			if perr != nil {
-				return abort(perr)
-			}
-			field := "password"
+			value = fmt.Sprintf("{{vwgen:%s/%s:%s:%s}}", item, field, n, cs)
+		} else {
 			opts := make([]huh.Option[string], len(fields))
 			for i, f := range fields {
 				opts[i] = huh.NewOption(f, f)
 			}
-			fs := []huh.Field{huh.NewSelect[string]().Title("Field").Options(opts...).Value(&field)}
-			n, cs := genDefaults()
-			if source == "vwgen" {
-				// a new item has no custom fields to pick; allow typing any field name
-				fs = []huh.Field{huh.NewInput().Title("Field (password, notes, or custom name)").Value(&field)}
-				fs = append(fs,
-					huh.NewInput().Title("Length").Value(&n).Validate(validLen),
-					huh.NewSelect[string]().Title("Charset").Options(
-						huh.NewOption("alphanumeric", "alnum"), huh.NewOption("hex", "hex"), huh.NewOption("with symbols", "symbols")).Value(&cs))
+			if err = newForm(huh.NewGroup(huh.NewSelect[string]().Title("Field").Options(opts...).Value(&field))).Run(); err != nil {
+				return
 			}
-			if err = newForm(huh.NewGroup(fs...)).Run(); err != nil {
-				return abort(err)
-			}
-			if source == "vw" {
-				value = fmt.Sprintf("{{vw:%s/%s}}", item, field)
-			} else {
-				value = fmt.Sprintf("{{vwgen:%s/%s:%s:%s}}", item, field, n, cs)
-			}
+			value = fmt.Sprintf("{{vw:%s/%s}}", item, field)
 		}
-		lines = append(lines, key+"="+value)
-		tplLines = append(tplLines, key+"="+value)
-	more:
+		return value, value, nil
+	}
+	return "", "", fmt.Errorf("unknown source %q", source)
+}
+
+func sourceOptions(fromExample bool) []huh.Option[string] {
+	var o []huh.Option[string]
+	if fromExample {
+		o = append(o, huh.NewOption("Keep the example value", "keep"), huh.NewOption("Skip this variable", "skip"))
+	}
+	return append(o,
+		huh.NewOption("Literal value", "literal"),
+		huh.NewOption("Literal secret (hidden input)", "secret"),
+		huh.NewOption("Generate random", "gen"),
+		huh.NewOption("Read from Vaultwarden", "vw"),
+		huh.NewOption("Vaultwarden: read, or generate + store if missing", "vwgen"))
+}
+
+// addManual loops asking for variables by hand.
+func addManual(res *cliResolver) (lines, tpl []string, err error) {
+	for {
+		var key, source string
+		if err = newForm(huh.NewGroup(
+			huh.NewInput().Title("Variable name").Value(&key).Validate(validKey),
+			huh.NewSelect[string]().Title("Value source").Options(sourceOptions(false)...).Value(&source),
+		)).Run(); err != nil {
+			return
+		}
+		v, t, aerr := askValue(res, key, source, "", "")
+		if aerr != nil {
+			return lines, tpl, aerr
+		}
+		lines = append(lines, key+"="+v)
+		tpl = append(tpl, key+"="+t)
 		var again bool
-		if err = newForm(huh.NewGroup(huh.NewConfirm().Title("Add another variable?").Value(&again))).Run(); err != nil {
+		if err = newForm(huh.NewGroup(huh.NewConfirm().Title("Add another variable?").Value(&again))).Run(); err != nil || !again {
+			return
+		}
+	}
+}
+
+// fromExample builds the plan for every variable in an example file.
+func fromExample(res *cliResolver, path string) (lines, tpl []string, err error) {
+	pairs, err := parseEnv(path)
+	if err != nil {
+		return
+	}
+	if len(pairs) == 0 {
+		return nil, nil, fmt.Errorf("%s has no variables", path)
+	}
+	project := projectName()
+	fmt.Fprintf(os.Stderr, "\nUsing %s (%d variables). Suggestions:\n", path, len(pairs))
+	for _, p := range pairs {
+		src := suggest(p.Key)
+		if src == "vwgen" {
+			fmt.Fprintf(os.Stderr, "  %-28s generate + store in vault item %q\n", p.Key, project)
+		} else {
+			fmt.Fprintf(os.Stderr, "  %-28s keep example value (%s)\n", p.Key, orNone(p.Value))
+		}
+	}
+	mode := "accept"
+	if err = newForm(huh.NewGroup(huh.NewSelect[string]().Title("How do you want to fill these in?").Options(
+		huh.NewOption("Accept the suggestions", "accept"),
+		huh.NewOption("Customize each variable", "custom"),
+		huh.NewOption("Cancel", "cancel")).Value(&mode))).Run(); err != nil {
+		return
+	}
+	if mode == "cancel" {
+		return nil, nil, huh.ErrUserAborted
+	}
+	for _, p := range pairs {
+		source := suggest(p.Key)
+		var v, t string
+		if mode == "custom" {
+			if err = newForm(huh.NewGroup(huh.NewSelect[string]().
+				Title(fmt.Sprintf("%s  (example: %s)", p.Key, orNone(p.Value))).
+				Options(sourceOptions(true)...).Value(&source))).Run(); err != nil {
+				return
+			}
+			if source == "skip" {
+				continue
+			}
+			if v, t, err = askValue(res, p.Key, source, project, p.Value); err != nil {
+				return
+			}
+		} else {
+			v, t = quickValue(p.Key, p.Value, project, source)
+		}
+		lines = append(lines, p.Key+"="+v)
+		tpl = append(tpl, p.Key+"="+t)
+	}
+	return
+}
+
+// runNew is the interactive builder. It assembles template lines, shows them
+// (never resolved secrets), optionally saves them as a template, then renders.
+// If an example file (.env.example, ...) is present it is the starting point.
+func runNew(res *cliResolver, out string, force, dry bool, from string, blank bool) int {
+	var lines, tplLines []string
+	var err error
+	if from == "" && !blank {
+		from = findExample()
+	}
+	if from != "" {
+		if lines, tplLines, err = fromExample(res, from); err != nil {
 			return abort(err)
 		}
-		if !again {
-			break
+		var more bool
+		if err = newForm(huh.NewGroup(huh.NewConfirm().Title("Add more variables by hand?").Value(&more))).Run(); err != nil {
+			return abort(err)
 		}
+		if more {
+			l, t, merr := addManual(res)
+			lines, tplLines = append(lines, l...), append(tplLines, t...)
+			if merr != nil {
+				return abort(merr)
+			}
+		}
+	} else {
+		if lines, tplLines, err = addManual(res); err != nil {
+			return abort(err)
+		}
+	}
+	if len(lines) == 0 {
+		fmt.Fprintln(os.Stderr, "nothing to write")
+		return 1
 	}
 
 	saveTpl := false
-	var tplPath string
 	fmt.Fprintf(os.Stderr, "\nPlan (secrets are resolved only when written):\n  %s\n\n", strings.Join(tplLines, "\n  "))
 	var proceed bool
 	if err := newForm(huh.NewGroup(
@@ -179,7 +329,7 @@ func runNew(res *cliResolver, out string, force, dry bool) int {
 		err = writeEnv(out, content, force, dry)
 	}
 	if err == nil && saveTpl {
-		tplPath = out + ".template"
+		tplPath := out + ".template"
 		if !strings.HasSuffix(out, ".env") {
 			tplPath = out + ".env.template"
 		}

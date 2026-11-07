@@ -21,6 +21,8 @@ export BW_SESSION="$(bw unlock --raw)"   # bw must point at your Vaultwarden ser
 ./tools env-gen new -o app/.env
 ```
 
+**From an example file.** Run `env-gen new` in a project directory that has a `.env.example` (also `.env.sample`, `.env.dist`, `example.env`) and it uses that as the starting point: variables whose names look secret (`PASSWORD`, `SECRET`, `TOKEN`, `API_KEY`, `JWT`, ...) are suggested as "generate and store in vault item `<project folder>`", everything else keeps the example value. Accept the suggestions in one step, or customize each variable (keep, skip, literal, hidden secret, generate, vault read, vault read-or-generate). Then review the plan, optionally save it as `.env.template`, and write `.env`. Use `-from FILE` to pick a different example, or `-blank` to ignore it.
+
 Secrets typed into the TUI are never written to a saved template (a `{{prompt:KEY}}` is saved instead).
 
 ## Guided setup

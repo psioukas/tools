@@ -155,6 +155,8 @@ func main() {
 	force := fs.Bool("force", false, "overwrite existing output files")
 	dry := fs.Bool("dry-run", false, "render to stdout, write nothing, store nothing in the vault")
 	outFile := fs.String("o", cfg.Get("defaults.output", ".env"), "output file for -set / new")
+	from := fs.String("from", "", "example file for new (default: auto-detect .env.example)")
+	blank := fs.Bool("blank", false, "for new: ignore any example file")
 	var sets multiFlag
 	fs.Var(&sets, "set", "KEY=VALUE entry (repeatable); value may contain placeholders")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage); fs.PrintDefaults() }
@@ -164,7 +166,7 @@ func main() {
 
 	switch {
 	case isNew:
-		os.Exit(runNew(res, *outFile, *force, *dry))
+		os.Exit(runNew(res, *outFile, *force, *dry, *from, *blank))
 	case len(sets) > 0:
 		fmt.Fprintf(os.Stderr, "(inline) -> %s\n", *outFile)
 		content, err := renderLines(sets, res)

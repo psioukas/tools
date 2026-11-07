@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -115,20 +114,15 @@ func runSetup() int {
 
 	// 3. unlock, unless the current BW_SESSION already works
 	if st.Status != "unlocked" || bw.Session == "" {
-		var pw string
-		if err := newForm(huh.NewGroup(huh.NewInput().Title("Master password").
-			EchoMode(huh.EchoModePassword).Value(&pw))).Run(); err != nil {
-			return abort(err)
-		}
-		cmd := exec.Command(bw.Bin, "unlock", "--raw", "--passwordenv", "ENVGEN_BW_PW")
-		cmd.Env = append(os.Environ(), "ENVGEN_BW_PW="+pw) // not on the command line, so not visible in ps
-		var out, errb bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &out, &errb
-		if err := cmd.Run(); err != nil {
-			say("unlock failed: %s", strings.TrimSpace(errb.String()))
+		sess, err := unlockInteractive(bw)
+		if err != nil {
+			if errors.Is(err, huh.ErrUserAborted) {
+				return abort(err)
+			}
+			say("unlock failed: %v", err)
 			return 1
 		}
-		bw.Session = strings.TrimSpace(out.String())
+		bw.Session = sess
 	}
 
 	// 4. connection test
@@ -163,7 +157,7 @@ func runSetup() int {
 
 	// 6. hand the session to the shell
 	fmt.Printf("export BW_SESSION='%s'\n", bw.Session)
-	if fi, err := os.Stdout.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
+	if isTerminal(os.Stdout) {
 		say("\nTo keep this session in your shell, run:  eval \"$(env-gen setup)\"")
 	}
 	return 0

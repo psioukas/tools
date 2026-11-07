@@ -107,6 +107,8 @@ const usage = `usage:
   env-gen [flags] -set KEY=VALUE ... [-o FILE]   build an env with no template
   env-gen new [-o FILE] [-force] [-dry-run]      interactive builder (TUI)
   env-gen edit [FILE] [-set K=V]... [-unset K]...   edit an existing .env (menu, or flags to script it)
+  env-gen unlock | lock                          unlock the vault (session cached briefly) / clear it
+  env-gen keys list|show|rm|rename|rotate ...    manage the fields stored in a vault item
   env-gen cache [list|clear|path]                recently used vault item/field names (no secrets)
   env-gen config [list|path|get K|set K V|unset K]   settings file in your user config dir
   env-gen setup                                  guided bw setup: server URL, login, unlock, connection test
@@ -155,6 +157,12 @@ func main() {
 			os.Exit(runPush(args[1:]))
 		case "pull":
 			os.Exit(runPull(args[1:]))
+		case "keys":
+			os.Exit(runKeys(args[1:]))
+		case "unlock":
+			os.Exit(runUnlock())
+		case "lock":
+			os.Exit(runLock())
 		case "cache":
 			os.Exit(runCache(args[1:]))
 		case "setup":

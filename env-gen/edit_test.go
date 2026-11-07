@@ -36,3 +36,33 @@ func TestRecentCache(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 }
+
+func TestSessionCache(t *testing.T) {
+	t.Setenv("ENV_GEN_SESSION", filepath.Join(t.TempDir(), "c", "session"))
+	if loadSession() != "" {
+		t.Fatal("expected empty")
+	}
+	saveSession("abc==")
+	if loadSession() != "abc==" {
+		t.Fatal("not cached")
+	}
+	st, _ := os.Stat(sessionPath())
+	if st.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v", st.Mode())
+	}
+	os.Chmod(sessionPath(), 0o644)
+	if loadSession() != "" {
+		t.Fatal("must ignore world-readable cache")
+	}
+	os.Chmod(sessionPath(), 0o600)
+	clearSession()
+	if loadSession() != "" {
+		t.Fatal("not cleared")
+	}
+	cfg.Set("session.ttl", "1ns")
+	defer cfg.Unset("session.ttl")
+	saveSession("x")
+	if loadSession() != "" {
+		t.Fatal("expired session returned")
+	}
+}

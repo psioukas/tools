@@ -46,7 +46,11 @@ func NewBw() *Bw {
 	if bin == "" {
 		bin = cfg.Get("vault.bw", "bw")
 	}
-	return &Bw{Bin: bin, Session: os.Getenv("BW_SESSION"), cache: map[string]*bwItem{}}
+	sess := os.Getenv("BW_SESSION")
+	if sess == "" {
+		sess = loadSession()
+	}
+	return &Bw{Bin: bin, Session: sess, cache: map[string]*bwItem{}}
 }
 
 func (b *Bw) run(stdin string, args ...string) ([]byte, error) {
@@ -64,17 +68,42 @@ func (b *Bw) run(stdin string, args ...string) ([]byte, error) {
 		if strings.Contains(msg, "Not found") {
 			return nil, errNotFound
 		}
+		if strings.Contains(strings.ToLower(msg), "locked") && b.Session != "" {
+			clearSession() // cached/exported session no longer valid
+		}
 		return nil, fmt.Errorf("%s %s: %v: %s", b.Bin, args[0], err, msg)
 	}
 	return out.Bytes(), nil
 }
 
-// Ready checks the vault is unlocked.
+// Ready makes sure there is a session: an exported or cached one, else (in a
+// terminal) an interactive unlock.
 func (b *Bw) Ready() error {
-	if b.Session == "" {
-		return errors.New(`vault locked: run  export BW_SESSION="$(bw unlock --raw)"`)
+	if b.Session != "" {
+		return nil
 	}
-	return nil
+	if isTerminal(os.Stdin) {
+		fmt.Fprintln(os.Stderr, "vault is locked; unlocking")
+		s, err := unlockInteractive(b)
+		if err != nil {
+			return err
+		}
+		b.Session = s
+		return nil
+	}
+	return errors.New(`vault locked: run  env-gen unlock  (or export BW_SESSION="$(bw unlock --raw)")`)
+}
+
+// Unlock runs `bw unlock` with the password passed through the environment (not argv).
+func (b *Bw) Unlock(password string) (string, error) {
+	cmd := exec.Command(b.Bin, "unlock", "--raw", "--passwordenv", "ENVGEN_BW_PW")
+	cmd.Env = append(os.Environ(), "ENVGEN_BW_PW="+password)
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("%s", strings.TrimSpace(errb.String()))
+	}
+	return strings.TrimSpace(out.String()), nil
 }
 
 func (b *Bw) get(name string) (*bwItem, error) {
@@ -231,4 +260,13 @@ func (b *Bw) Search(term string) ([]bwItem, error) {
 	}
 	var items []bwItem
 	return items, json.Unmarshal(out, &items)
+}
+
+func jsonUnmarshal(b []byte, v any) error { return json.Unmarshal(b, v) }
+
+// editRaw sends a full raw item (with its "id") back to `bw edit item`.
+func (b *Bw) editRaw(raw map[string]any) error {
+	js, _ := json.Marshal(raw)
+	_, err := b.run(base64.StdEncoding.EncodeToString(js), "edit", "item", fmt.Sprint(raw["id"]))
+	return err
 }

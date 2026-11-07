@@ -72,6 +72,27 @@ env-gen edit -set PORT=4000 -set 'TOKEN={{vwgen:myapp/TOKEN:32}}' -unset OLD_VAR
 
 Comments, blank lines, ordering and `export` prefixes are preserved. Changing a value offers the same sources as `new` (literal, hidden secret, generate, vault read, vault read-or-generate), and the current value is prefilled for literals. Secret-looking values are masked in the menu. Before saving you see a `+ ~ -` summary of changed variable names; the previous file is kept as `FILE.bak` (0600), and the interactive save offers the same "back up ALL variables to a vault item" step as `new`. In scripted mode the backup only happens with `-backup ITEM`. `-dry-run` prints the result instead of writing.
 
+## Unlock session
+
+```
+env-gen unlock     # hidden master-password prompt; session cached for 1h
+env-gen lock       # clear the cached session (and run bw lock)
+```
+
+The unlock session (`BW_SESSION`) is cached in `~/.cache/env-gen/session` (override `ENV_GEN_SESSION`) with mode 0600 and an expiry, and every command picks it up when `BW_SESSION` isn't exported. In a terminal, a command that needs the vault and finds none just prompts to unlock. A cached key is a bearer key to your vault until it expires, so keep the TTL short: `env-gen config set session.ttl 15m`, or turn it off with `env-gen config set session.cache off`. A cache file readable by others is ignored. `env-gen cache list` shows whether a session is cached (never the key).
+
+## Managing stored keys
+
+```
+env-gen keys list [ITEM]                # fields in a vault item (default: this folder's name), values hidden
+env-gen keys show ITEM KEY              # print one value
+env-gen keys rename ITEM OLD NEW
+env-gen keys rotate [-y] [-length 40] [-charset symbols] ITEM KEY   # fresh random value
+env-gen keys rm [-y] ITEM KEY...
+```
+
+Edits keep the rest of the vault item intact. Rotating or removing a value doesn't change `.env` files already written: re-run `env-gen pull ITEM` or `env-gen edit`. Destructive commands ask for confirmation, or need `-y` when there's no terminal.
+
 ## Recent vault items
 
 Vault item and field names you use (in the TUI pickers, placeholders, backups) are remembered in `~/.config`-style cache `$XDG_CACHE_HOME/env-gen/recent.json` (default `~/.cache/env-gen/recent.json`, override `ENV_GEN_CACHE`), up to 30 entries. The pickers list them first, before "search the vault" or "type a name". It stores names only: never values, passwords or session keys. `env-gen cache list | clear | path`; turn off with `env-gen config set defaults.cache off`.

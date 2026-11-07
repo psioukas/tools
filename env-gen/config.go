@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Config lives in the user's config dir, like ~/.aws/config or ~/.config/git/config:
@@ -29,6 +30,8 @@ var configKeys = []struct{ Key, Desc string }{
 	{"defaults.output", "default output file for -set / new (default .env)"},
 	{"defaults.length", "default generated-secret length in the TUI (default 32)"},
 	{"defaults.generator", "builtin (crypto/rand) or bw (Bitwarden generator via `bw generate`)"},
+	{"session.cache", "on|off: cache the unlock session in a 0600 file (default on)"},
+	{"session.ttl", "how long a cached session is trusted, e.g. 30m, 1h (default 1h)"},
 	{"defaults.cache", "on|off: remember recently used vault item/field names (default on)"},
 	{"defaults.charset", "default charset in the TUI: alnum|hex|symbols"},
 }
@@ -163,6 +166,12 @@ func runConfig(args []string) int {
 		if args[1] == "defaults.charset" {
 			if _, err := charsetFor(args[2]); err != nil {
 				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+		}
+		if args[1] == "session.ttl" {
+			if d, err := time.ParseDuration(args[2]); err != nil || d < 0 {
+				fmt.Fprintln(os.Stderr, "ttl must be a duration like 30m or 2h")
 				return 1
 			}
 		}

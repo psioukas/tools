@@ -105,6 +105,11 @@ func runCache(args []string) int {
 	case "path":
 		fmt.Println(cachePath())
 	case "list":
+		if exp, ok := sessionExpiry(); ok {
+			fmt.Printf("session: cached, expires %s (key not shown)\n", exp.Local().Format("15:04:05"))
+		} else {
+			fmt.Println("session: not cached")
+		}
 		items := loadRecent()
 		if len(items) == 0 {
 			fmt.Fprintln(os.Stderr, "no cached vault items")

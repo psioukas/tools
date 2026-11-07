@@ -62,6 +62,17 @@ env-gen config list | path | get KEY | set KEY VALUE | unset KEY
 
 Precedence: command-line flags, then `BW_BIN`, then the config file, then built-in defaults. Everything (render, `-set`, `new`, `push`, `pull`, `setup`, `config`) is one binary; the only external dependency is the Bitwarden CLI.
 
+## Offline / one-time mode
+
+```
+env-gen new -offline          # TUI, example-file aware, no vault anywhere
+env-gen -offline -o .env -set 'JWT={{gen:48}}' -set 'DB={{vwgen:app/db:24:symbols}}'
+```
+
+`-offline` never talks to Vaultwarden: no login, no `BW_SESSION`, no backup prompt, nothing is stored. Secrets are made with the Bitwarden password generator (`bw generate`, which runs locally and needs no login or network). `{{vwgen:...}}` becomes a plain one-time generate, `{{vw:...}}` is an error, and `-backup` is refused. Because nothing is stored, the output file is the only copy of those values.
+
+Hex secrets always use the built-in generator (`bw generate` has no hex mode). To use `bw generate` online too, pass `-generator bw` or `env-gen config set defaults.generator bw`. Lengths must be 5-128 in that mode.
+
 ## Moving existing .env files in and out of the vault
 
 ```

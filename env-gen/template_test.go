@@ -75,3 +75,14 @@ func TestRenderTemplateQuotes(t *testing.T) {
 		t.Fatalf("got %q", out)
 	}
 }
+
+func TestRenderLinesQuotesGenerated(t *testing.T) {
+	out, err := renderLines([]string{"A={{vw:db}}x", `B="keep"`}, &fake{stored: map[string]string{}})
+	if err != nil || out != "A=s3cretx\nB=\"keep\"\n" {
+		t.Fatalf("%q %v", out, err)
+	}
+	out, _ = renderLines([]string{"C={{vw:db}}"}, &spacey{})
+	if out != "C=\"a b#c\"\n" {
+		t.Fatalf("%q", out)
+	}
+}

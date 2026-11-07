@@ -102,6 +102,9 @@ func charsetOptions() []huh.Option[string] {
 // suggest returns the source runNew proposes for a variable from an example file.
 func suggest(key string) string {
 	if secretKeyRe.MatchString(key) {
+		if offline {
+			return "gen"
+		}
 		return "vwgen"
 	}
 	return "keep"
@@ -109,9 +112,12 @@ func suggest(key string) string {
 
 // quickValue is the non-interactive value for a suggested source.
 func quickValue(key, example, project, source string) (value, tpl string) {
-	if source == "vwgen" {
+	if source == "vwgen" || source == "gen" {
 		n, cs := genDefaults()
 		v := fmt.Sprintf("{{vwgen:%s/%s:%s:%s}}", project, key, n, cs)
+		if source == "gen" {
+			v = fmt.Sprintf("{{gen:%s:%s}}", n, cs)
+		}
 		return v, v
 	}
 	return example, quoteIfNeeded(example)
@@ -192,10 +198,14 @@ func sourceOptions(fromExample bool) []huh.Option[string] {
 	if fromExample {
 		o = append(o, huh.NewOption("Keep the example value", "keep"), huh.NewOption("Skip this variable", "skip"))
 	}
-	return append(o,
+	o = append(o,
 		huh.NewOption("Literal value", "literal"),
 		huh.NewOption("Literal secret (hidden input)", "secret"),
-		huh.NewOption("Generate random", "gen"),
+		huh.NewOption("Generate random", "gen"))
+	if offline {
+		return o
+	}
+	return append(o,
 		huh.NewOption("Read from Vaultwarden", "vw"),
 		huh.NewOption("Vaultwarden: read, or generate + store if missing", "vwgen"))
 }
@@ -236,7 +246,9 @@ func fromExample(res *cliResolver, path string) (lines, tpl []string, err error)
 	fmt.Fprintf(os.Stderr, "\nUsing %s (%d variables). Suggestions:\n", path, len(pairs))
 	for _, p := range pairs {
 		src := suggest(p.Key)
-		if src == "vwgen" {
+		if src == "gen" {
+			fmt.Fprintf(os.Stderr, "  %-28s generate (one-time, not stored)\n", p.Key)
+		} else if src == "vwgen" {
 			fmt.Fprintf(os.Stderr, "  %-28s generate + store in vault item %q\n", p.Key, project)
 		} else {
 			fmt.Fprintf(os.Stderr, "  %-28s keep example value (%s)\n", p.Key, orNone(p.Value))
@@ -312,14 +324,19 @@ func runNew(res *cliResolver, out string, force, dry bool, from string, blank bo
 
 	saveTpl := false
 	backup := projectName() // empty = no backup
+	if offline {
+		backup = ""
+	}
 	fmt.Fprintf(os.Stderr, "\nPlan (secrets are resolved only when written):\n  %s\n\n", strings.Join(tplLines, "\n  "))
 	var proceed bool
-	if err := newForm(huh.NewGroup(
-		huh.NewInput().Title("Output file").Value(&out),
-		huh.NewInput().Title("Back up ALL variables to this vault item").Description("a duplicate of every value is kept in the vault; leave empty to skip").Value(&backup),
+	fields := []huh.Field{huh.NewInput().Title("Output file").Value(&out)}
+	if !offline {
+		fields = append(fields, huh.NewInput().Title("Back up ALL variables to this vault item").Description("a duplicate of every value is kept in the vault; leave empty to skip").Value(&backup))
+	}
+	fields = append(fields,
 		huh.NewConfirm().Title("Also save this plan as a reusable template?").Value(&saveTpl),
-		huh.NewConfirm().Title("Write now?").Affirmative("Write").Negative("Cancel").Value(&proceed),
-	)).Run(); err != nil {
+		huh.NewConfirm().Title("Write now?").Affirmative("Write").Negative("Cancel").Value(&proceed))
+	if err := newForm(huh.NewGroup(fields...)).Run(); err != nil {
 		return abort(err)
 	}
 	if !proceed {

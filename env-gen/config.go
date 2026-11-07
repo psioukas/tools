@@ -28,6 +28,7 @@ var configKeys = []struct{ Key, Desc string }{
 	{"vault.bw", "path to the bw binary (default: bw from PATH)"},
 	{"defaults.output", "default output file for -set / new (default .env)"},
 	{"defaults.length", "default generated-secret length in the TUI (default 32)"},
+	{"defaults.generator", "builtin (crypto/rand) or bw (Bitwarden generator via `bw generate`)"},
 	{"defaults.charset", "default charset in the TUI: alnum|hex|symbols"},
 }
 
@@ -163,6 +164,10 @@ func runConfig(args []string) int {
 				fmt.Fprintln(os.Stderr, err)
 				return 1
 			}
+		}
+		if args[1] == "defaults.generator" && args[2] != "builtin" && args[2] != "bw" {
+			fmt.Fprintln(os.Stderr, "generator must be builtin or bw")
+			return 1
 		}
 		if args[1] == "defaults.length" && validLen(args[2]) != nil {
 			fmt.Fprintln(os.Stderr, "length must be a positive number")

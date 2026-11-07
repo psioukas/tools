@@ -17,16 +17,24 @@ type cliResolver struct {
 	dryRun bool
 }
 
-func (c *cliResolver) VW(item, field string) (string, error) { return c.bw.Read(item, field) }
+func (c *cliResolver) VW(item, field string) (string, error) {
+	if offline {
+		return "", fmt.Errorf("vault access is disabled in offline mode")
+	}
+	return c.bw.Read(item, field)
+}
 
 func (c *cliResolver) VWGen(item, field string, n int, cs string) (string, error) {
+	if offline { // one-time value: generated locally, never stored
+		fmt.Fprintf(os.Stderr, "  offline: generated %s/%s locally, not stored\n", item, field)
+		return genSecret(n, cs)
+	}
 	if v, err := c.bw.Read(item, field); err == nil && v != "" {
 		return v, nil
 	} else if err != nil && err != errNotFound && !strings.Contains(err.Error(), "no field") {
 		return "", err
 	}
-	set, _ := charsetFor(cs)
-	v, err := generate(n, set)
+	v, err := genSecret(n, cs)
 	if err != nil {
 		return "", err
 	}
@@ -158,11 +166,26 @@ func main() {
 	from := fs.String("from", "", "example file for new (default: auto-detect .env.example)")
 	blank := fs.Bool("blank", false, "for new: ignore any example file")
 	backup := fs.String("backup", "", "also store every rendered variable in this vault item (template / -set modes)")
+	offlineFlag := fs.Bool("offline", false, "one-time mode: no vault access, secrets generated locally with bw generate, nothing stored")
+	genFlag := fs.String("generator", cfg.Get("defaults.generator", "builtin"), "secret generator: builtin | bw (Bitwarden password generator)")
 	var sets multiFlag
 	fs.Var(&sets, "set", "KEY=VALUE entry (repeatable); value may contain placeholders")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage); fs.PrintDefaults() }
 	fs.Parse(args)
 
+	offline, generatorMode = *offlineFlag, *genFlag
+	if generatorMode != "builtin" && generatorMode != "bw" {
+		fmt.Fprintln(os.Stderr, "error: -generator must be builtin or bw")
+		os.Exit(2)
+	}
+	if offline {
+		generatorMode = "bw"
+		if *backup != "" {
+			fmt.Fprintln(os.Stderr, "error: -backup needs the vault; it can't be combined with -offline")
+			os.Exit(2)
+		}
+		fmt.Fprintln(os.Stderr, "offline mode: values are generated locally and NOT stored anywhere; keep the output file safe.")
+	}
 	res := &cliResolver{bw: NewBw(), in: bufio.NewReader(os.Stdin), dryRun: *dry}
 
 	switch {

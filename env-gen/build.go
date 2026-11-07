@@ -30,8 +30,8 @@ func renderLines(lines []string, r Resolver) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("%s: %w", k, err)
 		}
-		if val == v { // literal: quote if needed
-			val = quoteIfNeeded(val)
+		if t := strings.TrimSpace(v); !strings.HasPrefix(t, `"`) && !strings.HasPrefix(t, "'") {
+			val = quoteIfNeeded(val) // literals and generated/vault values alike
 		}
 		sb.WriteString(k + "=" + val + "\n")
 	}

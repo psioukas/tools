@@ -83,11 +83,7 @@ func Render(src string, r Resolver) (string, error) {
 				if len(parts) > 1 {
 					cs = parts[1]
 				}
-				set, err := charsetFor(cs)
-				if err != nil {
-					return "", err
-				}
-				return generate(n, set)
+				return genSecret(n, cs)
 			case "prompt":
 				return r.Prompt(rest)
 			case "vw":

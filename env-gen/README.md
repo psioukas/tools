@@ -72,6 +72,17 @@ env-gen edit -set PORT=4000 -set 'TOKEN={{vwgen:myapp/TOKEN:32}}' -unset OLD_VAR
 
 Comments, blank lines, ordering and `export` prefixes are preserved. Changing a value offers the same sources as `new` (literal, hidden secret, generate, vault read, vault read-or-generate), and the current value is prefilled for literals. Secret-looking values are masked in the menu. Before saving you see a `+ ~ -` summary of changed variable names; the previous file is kept as `FILE.bak` (0600), and the interactive save offers the same "back up ALL variables to a vault item" step as `new`. In scripted mode the backup only happens with `-backup ITEM`. `-dry-run` prints the result instead of writing.
 
+## Shell auto-completion
+
+```
+env-gen completion install                 # bash/fish: writes a file in your user completion dir
+source <(env-gen completion bash)          # or just try it in this shell
+source <(env-gen completion zsh)           # zsh: add this line to ~/.zshrc
+env-gen completion fish > ~/.config/fish/completions/env-gen.fish
+```
+
+Completes subcommands, flags per command, `keys`/`cache`/`config` subcommands, config key names, and vault item and field names from the local recent-items cache (so it is instant and never calls the vault; an item shows up after you've used it once). Without the `bash-completion` package, use the `source` line.
+
 ## Unlock session
 
 ```

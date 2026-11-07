@@ -311,10 +311,12 @@ func runNew(res *cliResolver, out string, force, dry bool, from string, blank bo
 	}
 
 	saveTpl := false
+	backup := projectName() // empty = no backup
 	fmt.Fprintf(os.Stderr, "\nPlan (secrets are resolved only when written):\n  %s\n\n", strings.Join(tplLines, "\n  "))
 	var proceed bool
 	if err := newForm(huh.NewGroup(
 		huh.NewInput().Title("Output file").Value(&out),
+		huh.NewInput().Title("Back up ALL variables to this vault item").Description("a duplicate of every value is kept in the vault; leave empty to skip").Value(&backup),
 		huh.NewConfirm().Title("Also save this plan as a reusable template?").Value(&saveTpl),
 		huh.NewConfirm().Title("Write now?").Affirmative("Write").Negative("Cancel").Value(&proceed),
 	)).Run(); err != nil {
@@ -325,6 +327,9 @@ func runNew(res *cliResolver, out string, force, dry bool, from string, blank bo
 		return 1
 	}
 	content, err := renderLines(lines, res)
+	if err == nil && strings.TrimSpace(backup) != "" {
+		err = backupContent(res.bw, strings.TrimSpace(backup), content, dry) // before writing: no copy, no .env
+	}
 	if err == nil {
 		err = writeEnv(out, content, force, dry)
 	}

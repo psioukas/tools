@@ -107,3 +107,25 @@ func runPull(args []string) int {
 	}
 	return 0
 }
+
+// backupContent mirrors every variable of a rendered env file into one vault
+// item as hidden custom fields (existing fields are updated), so the vault
+// always holds a copy of what was written.
+func backupContent(bw *Bw, item, content string, dry bool) error {
+	pairs, err := parseEnvReader(strings.NewReader(content), "rendered env")
+	if err != nil {
+		return err
+	}
+	if len(pairs) == 0 {
+		return nil
+	}
+	if dry {
+		fmt.Fprintf(os.Stderr, "  [dry-run] would back up %d variables to vault item %q\n", len(pairs), item)
+		return nil
+	}
+	if err := bw.StoreFields(item, pairs, true, false); err != nil {
+		return fmt.Errorf("vault backup to %q: %w", item, err)
+	}
+	fmt.Fprintf(os.Stderr, "  backed up %d variables to vault item %q\n", len(pairs), item)
+	return nil
+}

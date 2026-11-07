@@ -157,6 +157,7 @@ func main() {
 	outFile := fs.String("o", cfg.Get("defaults.output", ".env"), "output file for -set / new")
 	from := fs.String("from", "", "example file for new (default: auto-detect .env.example)")
 	blank := fs.Bool("blank", false, "for new: ignore any example file")
+	backup := fs.String("backup", "", "also store every rendered variable in this vault item (template / -set modes)")
 	var sets multiFlag
 	fs.Var(&sets, "set", "KEY=VALUE entry (repeatable); value may contain placeholders")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage); fs.PrintDefaults() }
@@ -170,6 +171,9 @@ func main() {
 	case len(sets) > 0:
 		fmt.Fprintf(os.Stderr, "(inline) -> %s\n", *outFile)
 		content, err := renderLines(sets, res)
+		if err == nil && *backup != "" {
+			err = backupContent(res.bw, *backup, content, *dry)
+		}
 		if err == nil {
 			err = writeEnv(*outFile, content, *force, *dry)
 		}
@@ -199,7 +203,10 @@ func main() {
 		src, err := os.ReadFile(t)
 		if err == nil {
 			var rendered string
-			if rendered, err = RenderTemplate(string(src), res); err == nil {
+			if rendered, err = RenderTemplate(string(src), res); err == nil && *backup != "" {
+				err = backupContent(res.bw, *backup, rendered, *dry)
+			}
+			if err == nil {
 				err = writeEnv(out, rendered, *force, *dry)
 			}
 		}

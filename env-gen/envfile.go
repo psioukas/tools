@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 )
@@ -16,8 +17,12 @@ func parseEnv(path string) ([]kv, error) {
 		return nil, err
 	}
 	defer f.Close()
+	return parseEnvReader(f, path)
+}
+
+func parseEnvReader(r io.Reader, path string) ([]kv, error) {
 	var out []kv
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
 	n := 0
 	for sc.Scan() {

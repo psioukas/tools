@@ -23,6 +23,8 @@ export BW_SESSION="$(bw unlock --raw)"   # bw must point at your Vaultwarden ser
 
 **From an example file.** Run `env-gen new` in a project directory that has a `.env.example` (also `.env.sample`, `.env.dist`, `example.env`) and it uses that as the starting point: variables whose names look secret (`PASSWORD`, `SECRET`, `TOKEN`, `API_KEY`, `JWT`, ...) are suggested as "generate and store in vault item `<project folder>`", everything else keeps the example value. Accept the suggestions in one step, or customize each variable (keep, skip, literal, hidden secret, generate, vault read, vault read-or-generate). Then review the plan, optionally save it as `.env.template`, and write `.env`. Use `-from FILE` to pick a different example, or `-blank` to ignore it.
 
+**Vault backup.** `new` asks for a "Back up ALL variables to this vault item" (default: the project folder name). Every variable written to `.env`, including kept example values and typed literals, is also stored as a hidden custom field of that item, and existing fields are updated to match. The backup happens before `.env` is written, so if it fails (vault locked, network), no `.env` is written. Clear the field to skip. In template and `-set` modes, add `-backup ITEM` to get the same behaviour. `-dry-run` never touches the vault. `env-gen pull ITEM` rebuilds the `.env` from the backup.
+
 Secrets typed into the TUI are never written to a saved template (a `{{prompt:KEY}}` is saved instead).
 
 ## Guided setup

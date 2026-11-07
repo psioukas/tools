@@ -34,11 +34,44 @@ func validKey(s string) error {
 	return nil
 }
 
-// pickVaultItem lets the user search the vault; falls back to typing the name.
+// pickVaultItem offers recently used items first, then lets the user search the
+// vault or type a name.
 func pickVaultItem(bw *Bw) (item string, fields []string, err error) {
-	fields = []string{"password", "username", "uri", "notes"}
+	std := []string{"password", "username", "uri", "notes"}
+	fields = append([]string{}, std...)
+	mode := "search"
+	if recent := loadRecent(); len(recent) > 0 {
+		opts := make([]huh.Option[string], 0, len(recent)+2)
+		for _, r := range recent {
+			label := r.Name
+			if len(r.Fields) > 0 {
+				label += "  (" + strings.Join(r.Fields, ", ") + ")"
+			}
+			opts = append(opts, huh.NewOption(label, "r:"+r.Name))
+		}
+		opts = append(opts, huh.NewOption("Search the vault…", "search"), huh.NewOption("Type a name", "type"))
+		choice := opts[0].Value
+		if err = newForm(huh.NewGroup(huh.NewSelect[string]().Title("Vault item (recent first)").Options(opts...).Value(&choice))).Run(); err != nil {
+			return
+		}
+		if strings.HasPrefix(choice, "r:") {
+			item = strings.TrimPrefix(choice, "r:")
+			for _, r := range recent {
+				if r.Name == item {
+					for _, f := range r.Fields {
+						if !containsStr(fields, f) {
+							fields = append(fields, f)
+						}
+					}
+				}
+			}
+			recordItem(item)
+			return
+		}
+		mode = choice
+	}
 	var search string
-	if bw.Session != "" {
+	if bw.Session != "" && mode == "search" {
 		if err = newForm(huh.NewGroup(huh.NewInput().Title("Search vault (blank to type a name)").Value(&search))).Run(); err != nil {
 			return
 		}
@@ -60,6 +93,7 @@ func pickVaultItem(bw *Bw) (item string, fields []string, err error) {
 					}
 				}
 			}
+			recordItem(item)
 			return
 		}
 		fmt.Fprintln(os.Stderr, "no matches (or search failed); type the name instead")
@@ -71,6 +105,9 @@ func pickVaultItem(bw *Bw) (item string, fields []string, err error) {
 			}
 			return nil
 		}))).Run()
+	if err == nil {
+		recordItem(item)
+	}
 	return
 }
 

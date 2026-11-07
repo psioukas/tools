@@ -126,6 +126,7 @@ func backupContent(bw *Bw, item, content string, dry bool) error {
 	if err := bw.StoreFields(item, pairs, true, false); err != nil {
 		return fmt.Errorf("vault backup to %q: %w", item, err)
 	}
+	recordItem(item)
 	fmt.Fprintf(os.Stderr, "  backed up %d variables to vault item %q\n", len(pairs), item)
 	return nil
 }

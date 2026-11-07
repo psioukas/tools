@@ -21,10 +21,12 @@ func (c *cliResolver) VW(item, field string) (string, error) {
 	if offline {
 		return "", fmt.Errorf("vault access is disabled in offline mode")
 	}
+	recordItem(item, field)
 	return c.bw.Read(item, field)
 }
 
 func (c *cliResolver) VWGen(item, field string, n int, cs string) (string, error) {
+	recordItem(item, field)
 	if offline { // one-time value: generated locally, never stored
 		fmt.Fprintf(os.Stderr, "  offline: generated %s/%s locally, not stored\n", item, field)
 		return genSecret(n, cs)
@@ -104,6 +106,8 @@ const usage = `usage:
   env-gen [flags] <template|dir>...        render *.env.template files
   env-gen [flags] -set KEY=VALUE ... [-o FILE]   build an env with no template
   env-gen new [-o FILE] [-force] [-dry-run]      interactive builder (TUI)
+  env-gen edit [FILE] [-set K=V]... [-unset K]...   edit an existing .env (menu, or flags to script it)
+  env-gen cache [list|clear|path]                recently used vault item/field names (no secrets)
   env-gen config [list|path|get K|set K V|unset K]   settings file in your user config dir
   env-gen setup                                  guided bw setup: server URL, login, unlock, connection test
   env-gen push [-item NAME] <.env>               store an existing .env in the vault + write a template
@@ -151,12 +155,15 @@ func main() {
 			os.Exit(runPush(args[1:]))
 		case "pull":
 			os.Exit(runPull(args[1:]))
+		case "cache":
+			os.Exit(runCache(args[1:]))
 		case "setup":
 			os.Exit(runSetup())
 		}
 	}
 	isNew := len(args) > 0 && args[0] == "new"
-	if isNew {
+	isEdit := len(args) > 0 && args[0] == "edit"
+	if isNew || isEdit {
 		args = args[1:]
 	}
 	fs := flag.NewFlagSet("env-gen", flag.ExitOnError)
@@ -168,7 +175,8 @@ func main() {
 	backup := fs.String("backup", "", "also store every rendered variable in this vault item (template / -set modes)")
 	offlineFlag := fs.Bool("offline", false, "one-time mode: no vault access, secrets generated locally with bw generate, nothing stored")
 	genFlag := fs.String("generator", cfg.Get("defaults.generator", "builtin"), "secret generator: builtin | bw (Bitwarden password generator)")
-	var sets multiFlag
+	var sets, unsets multiFlag
+	fs.Var(&unsets, "unset", "KEY to remove (edit mode, repeatable)")
 	fs.Var(&sets, "set", "KEY=VALUE entry (repeatable); value may contain placeholders")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage); fs.PrintDefaults() }
 	fs.Parse(args)
@@ -189,6 +197,12 @@ func main() {
 	res := &cliResolver{bw: NewBw(), in: bufio.NewReader(os.Stdin), dryRun: *dry}
 
 	switch {
+	case isEdit:
+		file := ".env"
+		if fs.NArg() > 0 {
+			file = fs.Arg(0)
+		}
+		os.Exit(runEdit(res, file, sets, unsets, *backup, *dry))
 	case isNew:
 		os.Exit(runNew(res, *outFile, *force, *dry, *from, *blank))
 	case len(sets) > 0:

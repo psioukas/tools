@@ -29,6 +29,7 @@ var configKeys = []struct{ Key, Desc string }{
 	{"defaults.output", "default output file for -set / new (default .env)"},
 	{"defaults.length", "default generated-secret length in the TUI (default 32)"},
 	{"defaults.generator", "builtin (crypto/rand) or bw (Bitwarden generator via `bw generate`)"},
+	{"defaults.cache", "on|off: remember recently used vault item/field names (default on)"},
 	{"defaults.charset", "default charset in the TUI: alnum|hex|symbols"},
 }
 

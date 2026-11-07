@@ -62,6 +62,20 @@ env-gen config list | path | get KEY | set KEY VALUE | unset KEY
 
 Precedence: command-line flags, then `BW_BIN`, then the config file, then built-in defaults. Everything (render, `-set`, `new`, `push`, `pull`, `setup`, `config`) is one binary; the only external dependency is the Bitwarden CLI.
 
+## Editing an existing .env
+
+```
+env-gen edit              # menu for ./.env: change, rename, delete, add variables
+env-gen edit app/.env
+env-gen edit -set PORT=4000 -set 'TOKEN={{vwgen:myapp/TOKEN:32}}' -unset OLD_VAR -backup myapp   # no prompts
+```
+
+Comments, blank lines, ordering and `export` prefixes are preserved. Changing a value offers the same sources as `new` (literal, hidden secret, generate, vault read, vault read-or-generate), and the current value is prefilled for literals. Secret-looking values are masked in the menu. Before saving you see a `+ ~ -` summary of changed variable names; the previous file is kept as `FILE.bak` (0600), and the interactive save offers the same "back up ALL variables to a vault item" step as `new`. In scripted mode the backup only happens with `-backup ITEM`. `-dry-run` prints the result instead of writing.
+
+## Recent vault items
+
+Vault item and field names you use (in the TUI pickers, placeholders, backups) are remembered in `~/.config`-style cache `$XDG_CACHE_HOME/env-gen/recent.json` (default `~/.cache/env-gen/recent.json`, override `ENV_GEN_CACHE`), up to 30 entries. The pickers list them first, before "search the vault" or "type a name". It stores names only: never values, passwords or session keys. `env-gen cache list | clear | path`; turn off with `env-gen config set defaults.cache off`.
+
 ## Offline / one-time mode
 
 ```

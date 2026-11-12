@@ -90,6 +90,7 @@ type uiEnv struct {
 	root   string
 	vault  string
 	secret []byte
+	adm    []byte
 	csrf   string
 }
 
@@ -108,12 +109,16 @@ func newUIEnv(t *testing.T) *uiEnv {
 	t.Setenv("FAKE_VAULT", vault)
 	t.Setenv("ENV_GEN_CACHE", filepath.Join(dir, "cache.json"))
 	secret := []byte("12345678901234567890")
-	s := &uiServer{root: root, insecure: true, idle: time.Minute, maxAge: time.Hour, totp: secret, bin: bin,
-		hosts: map[string]bool{}, lim: newLimiter()}
+	adm := []byte("abcdefghijklmnopqrst")
+	salt := []byte("saltsaltsaltsalt")
+	key, _ := hashPassphrase("correct horse battery", salt, 1000)
+	creds := &uiCreds{totp: secret, adminSalt: salt, adminKey: key, adminIter: 1000, adminTOTP: adm}
+	s := &uiServer{root: root, insecure: true, idle: time.Minute, maxAge: time.Hour, creds: creds, bin: bin,
+		adminTTL: 5 * time.Minute, hosts: map[string]bool{}, lim: newLimiter(), adminLim: newLimiter()}
 	srv := httptest.NewServer(s.handler())
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
-	return &uiEnv{s: s, srv: srv, client: &http.Client{Jar: jar}, root: root, vault: vault, secret: secret}
+	return &uiEnv{s: s, srv: srv, client: &http.Client{Jar: jar}, root: root, vault: vault, secret: secret, adm: adm}
 }
 
 func (e *uiEnv) do(t *testing.T, method, path string, body any, csrf bool) (int, map[string]any) {
@@ -154,6 +159,17 @@ func (e *uiEnv) login(t *testing.T) {
 		t.Fatalf("login: %d %v", st, out)
 	}
 	e.csrf = out["csrf"].(string)
+}
+
+func (e *uiEnv) elevate(t *testing.T) {
+	t.Helper()
+	e.s.mu.Lock()
+	e.s.lastAdminTOTP = 0
+	e.s.mu.Unlock()
+	code := totpAt(e.adm, time.Now().Unix()/30)
+	if st, out := e.do(t, "POST", "/api/admin/elevate", map[string]string{"passphrase": "correct horse battery", "code": code}, true); st != 200 {
+		t.Fatalf("elevate: %d %v", st, out)
+	}
 }
 
 func TestUIRequiresAuth(t *testing.T) {
@@ -230,6 +246,15 @@ func TestUIFlow(t *testing.T) {
 		t.Fatal("preview touched the vault")
 	}
 
+	// without admin credentials, storing in the vault is refused
+	if st, _ := e.do(t, "POST", "/api/save", saveReq{Path: "shop/.env", Ops: ops, BackupItem: "shop"}, true); st != 403 {
+		t.Fatalf("vault store without admin: %d", st)
+	}
+	if _, err := os.Stat(filepath.Join(e.vault, "shop")); err == nil {
+		t.Fatal("refused save still touched the vault")
+	}
+	e.elevate(t)
+
 	// real save with vault backup
 	st, sv := e.do(t, "POST", "/api/save", saveReq{Path: "shop/.env", Ops: ops, BackupItem: "shop"}, true)
 	if st != 200 || sv["saved"] != true {
@@ -301,5 +326,175 @@ func TestUIHeadersAndHTTPS(t *testing.T) {
 	req.Host = "vault.example.com"
 	if r, _ := http.DefaultClient.Do(req); r.StatusCode != 200 {
 		t.Errorf("good request refused: %d", r.StatusCode)
+	}
+}
+
+func TestUIAdminGate(t *testing.T) {
+	e := newUIEnv(t)
+	e.login(t)
+	e.do(t, "POST", "/api/save", saveReq{Path: "shop/.env", BackupItem: "x", Preview: true}, true)
+
+	adminCalls := []struct {
+		method, path string
+		body         any
+	}{
+		{"GET", "/api/admin/keys?item=shop", nil},
+		{"GET", "/api/admin/key?item=shop&key=A", nil},
+		{"POST", "/api/admin/keys/generate", map[string]any{"item": "shop", "field": "K", "length": 16, "charset": "alnum"}},
+		{"POST", "/api/admin/keys/rename", map[string]any{"item": "shop", "old": "K", "new": "K2"}},
+		{"POST", "/api/admin/keys/delete", map[string]any{"item": "shop", "keys": []string{"K"}}},
+		{"POST", "/api/admin/push", map[string]any{"path": "shop/.env", "item": "shop"}},
+		{"POST", "/api/admin/pull", map[string]any{"item": "shop", "to": "shop/.env.out"}},
+	}
+	for _, c := range adminCalls {
+		if st, _ := e.do(t, c.method, c.path, c.body, true); st != 403 {
+			t.Errorf("%s %s without admin: want 403, got %d", c.method, c.path, st)
+		}
+	}
+
+	// wrong passphrase / wrong code are refused and nothing is elevated
+	e.s.mu.Lock()
+	e.s.lastAdminTOTP = 0
+	e.s.mu.Unlock()
+	good := totpAt(e.adm, time.Now().Unix()/30)
+	if st, _ := e.do(t, "POST", "/api/admin/elevate", map[string]string{"passphrase": "wrong", "code": good}, true); st != 401 {
+		t.Errorf("wrong passphrase: %d", st)
+	}
+	if st, _ := e.do(t, "POST", "/api/admin/elevate", map[string]string{"passphrase": "correct horse battery", "code": "000000"}, true); st != 401 {
+		t.Errorf("wrong code: %d", st)
+	}
+	// the EDITOR authenticator code must not work for admin
+	if st, _ := e.do(t, "POST", "/api/admin/elevate", map[string]string{"passphrase": "correct horse battery", "code": totpAt(e.secret, time.Now().Unix()/30)}, true); st != 401 {
+		t.Errorf("editor code accepted for admin: %d", st)
+	}
+	if st, _ := e.do(t, "GET", "/api/admin/keys?item=shop", nil, true); st != 403 {
+		t.Errorf("still not admin: %d", st)
+	}
+
+	e.elevate(t)
+	_, stt := e.do(t, "GET", "/api/status", nil, false)
+	if stt["admin"] != true {
+		t.Fatalf("status: %v", stt)
+	}
+
+	// generate, list, reveal, rename, delete
+	if st, out := e.do(t, "POST", "/api/admin/keys/generate", adminCalls[2].body, true); st != 200 {
+		t.Fatalf("generate: %d %v", st, out)
+	} else if _, leaked := out["value"]; leaked {
+		t.Fatal("generate must not return the secret")
+	}
+	if st, _ := e.do(t, "POST", "/api/admin/keys/generate", adminCalls[2].body, true); st != 409 {
+		t.Errorf("duplicate generate: %d", st)
+	}
+	if st, _ := e.do(t, "POST", "/api/admin/keys/generate", map[string]any{"item": "shop", "field": "K", "length": 16, "charset": "alnum", "replace": true}, true); st != 200 {
+		t.Errorf("replace: %d", st)
+	}
+	_, ls := e.do(t, "GET", "/api/admin/keys?item=shop", nil, true)
+	if b, _ := json.Marshal(ls); !strings.Contains(string(b), `"name":"K"`) || !strings.Contains(string(b), `"length":16`) || strings.Contains(string(b), "value") {
+		t.Fatalf("list: %s", b)
+	}
+	if _, rv := e.do(t, "GET", "/api/admin/key?item=shop&key=K", nil, true); len(fmt.Sprint(rv["value"])) != 16 {
+		t.Fatalf("reveal: %v", rv)
+	}
+	if st, _ := e.do(t, "POST", "/api/admin/keys/rename", adminCalls[3].body, true); st != 200 {
+		t.Errorf("rename: %d", st)
+	}
+	if st, _ := e.do(t, "POST", "/api/admin/keys/delete", map[string]any{"item": "shop", "keys": []string{"K2"}}, true); st != 200 {
+		t.Errorf("delete: %d", st)
+	}
+	if st, _ := e.do(t, "POST", "/api/admin/keys/delete", map[string]any{"item": "shop", "keys": []string{"NOPE"}}, true); st != 404 {
+		t.Errorf("delete missing: %d", st)
+	}
+
+	// push, then pull round-trips; overwrite protections
+	if st, out := e.do(t, "POST", "/api/admin/push", map[string]any{"path": "shop/.env", "item": "shop2", "template": true}, true); st != 200 || out["pushed"] != float64(2) {
+		t.Fatalf("push: %d %v", st, out)
+	}
+	if st, _ := e.do(t, "POST", "/api/admin/push", map[string]any{"path": "shop/.env", "item": "shop2"}, true); st != 409 {
+		t.Errorf("push clash: %d", st)
+	}
+	if b, _ := os.ReadFile(filepath.Join(e.root, "shop", ".env.template")); !strings.Contains(string(b), "{{vw:shop2/PORT}}") {
+		t.Fatalf("template: %q", b)
+	}
+	if st, out := e.do(t, "POST", "/api/admin/pull", map[string]any{"item": "shop2", "to": "shop/.env.out"}, true); st != 200 {
+		t.Fatalf("pull: %d %v", st, out)
+	}
+	if b, _ := os.ReadFile(filepath.Join(e.root, "shop", ".env.out")); !strings.Contains(string(b), "PORT=3000") || !strings.Contains(string(b), "TOKEN=abc") {
+		t.Fatalf("pulled: %q", b)
+	}
+	if st, _ := e.do(t, "POST", "/api/admin/pull", map[string]any{"item": "shop2", "to": "shop/.env.out"}, true); st != 409 {
+		t.Errorf("pull clash: %d", st)
+	}
+	if st, _ := e.do(t, "POST", "/api/admin/pull", map[string]any{"item": "shop2", "to": "../escape.env", "force": true}, true); st != 400 {
+		t.Errorf("pull escape: %d", st)
+	}
+
+	// dropping admin takes effect immediately, and the window expires by itself
+	e.do(t, "POST", "/api/admin/drop", map[string]any{}, true)
+	if st, _ := e.do(t, "GET", "/api/admin/keys?item=shop", nil, true); st != 403 {
+		t.Errorf("after drop: %d", st)
+	}
+	e.s.adminTTL = 50 * time.Millisecond
+	e.elevate(t)
+	time.Sleep(120 * time.Millisecond)
+	if st, _ := e.do(t, "GET", "/api/admin/keys?item=shop", nil, true); st != 403 {
+		t.Errorf("after expiry: %d", st)
+	}
+}
+
+func TestUIAdminDisabledWhenNotConfigured(t *testing.T) {
+	e := newUIEnv(t)
+	e.s.creds.adminKey, e.s.creds.adminTOTP = nil, nil
+	e.login(t)
+	if st, _ := e.do(t, "POST", "/api/admin/elevate", map[string]string{"passphrase": "correct horse battery", "code": "123456"}, true); st != 403 {
+		t.Errorf("elevate when disabled: %d", st)
+	}
+	if st, _ := e.do(t, "GET", "/api/admin/keys?item=x", nil, true); st != 403 {
+		t.Errorf("admin call when disabled: %d", st)
+	}
+}
+
+func TestAdminCredsRoundTrip(t *testing.T) {
+	old := cfg
+	cfg = &Config{Path: filepath.Join(t.TempDir(), "config"), vals: map[string]string{}}
+	t.Cleanup(func() { cfg = old })
+	if code := runUIInit(false); code != 0 {
+		t.Fatal("init failed")
+	}
+	key, err := setAdminCreds("a long passphrase!", 1000)
+	if err != nil || key == "" {
+		t.Fatal(err)
+	}
+	c, err := loadUICreds()
+	if err != nil || !c.adminEnabled() || !c.checkPassphrase("a long passphrase!") || c.checkPassphrase("nope") {
+		t.Fatalf("%v %+v", err, c)
+	}
+	// re-running init with -force must keep admin credentials
+	if code := runUIInit(true); code != 0 {
+		t.Fatal("force init failed")
+	}
+	if c, _ := loadUICreds(); !c.adminEnabled() {
+		t.Fatal("admin credentials lost by ui init -force")
+	}
+}
+
+func TestTOTPNotBurnedByOtherFactorFailure(t *testing.T) {
+	e := newUIEnv(t)
+	e.login(t)
+	e.s.mu.Lock()
+	e.s.lastAdminTOTP = 0
+	e.s.mu.Unlock()
+	good := totpAt(e.adm, time.Now().Unix()/30)
+	// wrong passphrase with a valid code, then the right passphrase with the same code
+	if st, _ := e.do(t, "POST", "/api/admin/elevate", map[string]string{"passphrase": "wrong wrong wrong", "code": good}, true); st != 401 {
+		t.Fatal("expected 401")
+	}
+	if st, out := e.do(t, "POST", "/api/admin/elevate", map[string]string{"passphrase": "correct horse battery", "code": good}, true); st != 200 {
+		t.Fatalf("valid code was burned by the failed attempt: %d %v", st, out)
+	}
+	// but a successful login does use it up
+	e.do(t, "POST", "/api/admin/drop", map[string]any{}, true)
+	if st, _ := e.do(t, "POST", "/api/admin/elevate", map[string]string{"passphrase": "correct horse battery", "code": good}, true); st != 401 {
+		t.Fatalf("replay of a used code accepted: %d", st)
 	}
 }

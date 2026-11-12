@@ -108,7 +108,7 @@ func installCompletion() int {
 const bashCompletion = `# bash completion for env-gen   (source <(env-gen completion bash))
 _env_gen() {
   local cur="${COMP_WORDS[COMP_CWORD]}" sub="${COMP_WORDS[1]}" sub2="${COMP_WORDS[2]}"
-  local cmds="new edit push pull setup unlock lock keys cache config completion"
+  local cmds="new edit push pull setup unlock lock keys cache config completion ui"
   COMPREPLY=()
   if [[ $COMP_CWORD -eq 1 ]]; then
     COMPREPLY=($(compgen -W "$cmds -h -force -dry-run -o -set -backup -offline -generator" -- "$cur"))
@@ -123,12 +123,14 @@ _env_gen() {
       push)  flags="-item -force -dry-run -no-template" ;;
       pull)  flags="-o -force -dry-run" ;;
       keys)  flags="-y -length -charset" ;;
+      ui)    flags="-root -host -trust-proxy -listen -insecure-http -idle -admin-ttl -force" ;;
       *)     flags="-force -dry-run -o -set -backup -offline -generator" ;;
     esac
     COMPREPLY=($(compgen -W "$flags" -- "$cur"))
     return
   fi
   case "$sub" in
+    ui)         [[ $COMP_CWORD -eq 2 ]] && COMPREPLY=($(compgen -W "init admin-init" -- "$cur")) ;;
     completion) [[ $COMP_CWORD -eq 2 ]] && COMPREPLY=($(compgen -W "bash zsh fish install" -- "$cur")) ;;
     cache)      [[ $COMP_CWORD -eq 2 ]] && COMPREPLY=($(compgen -W "list clear path" -- "$cur")) ;;
     config)
@@ -160,7 +162,7 @@ autoload -U +X bashcompinit && bashcompinit
 ` + bashCompletion
 
 const fishCompletion = `# fish completion for env-gen
-set -l cmds new edit push pull setup unlock lock keys cache config completion
+set -l cmds new edit push pull setup unlock lock keys cache config completion ui
 complete -c env-gen -f
 complete -c env-gen -n "not __fish_seen_subcommand_from $cmds" -a "$cmds"
 complete -c env-gen -n "not __fish_seen_subcommand_from $cmds" -F

@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 var envNameRe = regexp.MustCompile(`^(\.env(\..+)?|.+\.env(\..+)?)$`)
@@ -251,6 +252,9 @@ func (s *uiServer) save(w http.ResponseWriter, r *http.Request, sess *uiSession)
 			return nil, http.StatusBadRequest, fmt.Errorf("unknown op %q", op.Op)
 		}
 	}
+	if !req.Preview && (strings.TrimSpace(req.BackupItem) != "" || usesVaultStore(req.Ops)) && !sess.isAdmin(time.Now()) {
+		return nil, http.StatusForbidden, errors.New("storing values in the vault (backup, generate-and-store) needs admin credentials: use Admin sign-in")
+	}
 	bw := s.newBw(sess.bwSession)
 	res := &cliResolver{bw: bw, in: bufio.NewReader(strings.NewReader(""))}
 	for _, op := range req.Ops {
@@ -291,6 +295,15 @@ func (s *uiServer) save(w http.ResponseWriter, r *http.Request, sess *uiSession)
 		return nil, http.StatusInternalServerError, errors.New("could not write file")
 	}
 	return map[string]any{"saved": true, "changes": summary, "path": s.rel(dst)}, 0, nil
+}
+
+func usesVaultStore(ops []uiOp) bool {
+	for _, op := range ops {
+		if op.Op == "set" && op.Source != nil && op.Source.Kind == "vwgen" {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *uiServer) resolveSource(res *cliResolver, src *uiSource) (string, error) {

@@ -28,6 +28,7 @@ var webFS embed.FS
 type uiSession struct {
 	id, csrf, bwSession string
 	created, last       time.Time
+	adminUntil          time.Time // zero unless elevated with admin credentials
 }
 
 type uiServer struct {
@@ -37,13 +38,16 @@ type uiServer struct {
 	insecure   bool // plain-http dev mode, loopback only
 	idle       time.Duration
 	maxAge     time.Duration
-	totp       []byte
+	creds      *uiCreds
+	adminTTL   time.Duration
 	bin        string
 
-	mu       sync.Mutex
-	sess     *uiSession
-	lastTOTP int64
-	lim      *limiter
+	mu            sync.Mutex
+	sess          *uiSession
+	lastTOTP      int64
+	lastAdminTOTP int64
+	lim           *limiter
+	adminLim      *limiter
 }
 
 func randHex(n int) string {
@@ -55,6 +59,12 @@ func randHex(n int) string {
 }
 
 func runUI(args []string) int {
+	if len(args) > 0 && args[0] == "admin-init" {
+		f := flag.NewFlagSet("ui admin-init", flag.ExitOnError)
+		force := f.Bool("force", false, "replace existing admin credentials")
+		f.Parse(args[1:])
+		return runUIAdminInit(*force)
+	}
 	if len(args) > 0 && args[0] == "init" {
 		f := flag.NewFlagSet("ui init", flag.ExitOnError)
 		force := f.Bool("force", false, "replace an existing 2FA secret")
@@ -68,14 +78,15 @@ func runUI(args []string) int {
 	trust := f.Bool("trust-proxy", false, "trust X-Forwarded-Proto/-For from the reverse proxy (required unless -insecure-http)")
 	insecure := f.Bool("insecure-http", false, "development only: allow plain http on a loopback address")
 	idle := f.Duration("idle", 15*time.Minute, "log out after this much inactivity")
+	adminTTL := f.Duration("admin-ttl", 5*time.Minute, "how long an admin sign-in lasts")
 	f.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: env-gen ui init | env-gen ui -root DIR -host vault.example.com -trust-proxy [-listen 127.0.0.1:8765]")
+		fmt.Fprintln(os.Stderr, "usage: env-gen ui init | ui admin-init | env-gen ui -root DIR -host vault.example.com -trust-proxy [-listen 127.0.0.1:8765]")
 		f.PrintDefaults()
 	}
 	f.Parse(args)
 
 	s := &uiServer{idle: *idle, maxAge: 8 * time.Hour, trustProxy: *trust, insecure: *insecure,
-		hosts: map[string]bool{}, lim: newLimiter(), bin: bwBin()}
+		hosts: map[string]bool{}, lim: newLimiter(), adminLim: newLimiter(), adminTTL: *adminTTL, bin: bwBin()}
 	abs, err := filepath.Abs(*root)
 	if err == nil {
 		abs, err = filepath.EvalSymlinks(abs)
@@ -109,9 +120,14 @@ func runUI(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: -insecure-http is only allowed on a loopback address")
 		return 2
 	}
-	if s.totp, err = loadTOTPSecret(); err != nil {
+	if s.creds, err = loadUICreds(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
+	}
+	if s.creds.adminEnabled() {
+		fmt.Fprintln(os.Stderr, "admin features enabled (keys, push, pull, storing in the vault need admin sign-in)")
+	} else {
+		fmt.Fprintln(os.Stderr, "admin features DISABLED: run  env-gen ui admin-init  to enable keys, push, pull and vault storing")
 	}
 	if _, err := exec.LookPath(s.bin); err != nil {
 		fmt.Fprintf(os.Stderr, "error: bw (%q) not found in PATH\n", s.bin)
@@ -158,6 +174,15 @@ func (s *uiServer) handler() http.Handler {
 	mux.HandleFunc("GET /api/vault/search", s.wrap(true, s.vaultSearch))
 	mux.HandleFunc("GET /api/vault/fields", s.wrap(true, s.vaultFields))
 	mux.HandleFunc("GET /api/vault/recent", s.wrap(true, s.vaultRecent))
+	mux.HandleFunc("POST /api/admin/elevate", s.wrap(true, s.elevate))
+	mux.HandleFunc("POST /api/admin/drop", s.wrap(true, s.dropAdmin))
+	mux.HandleFunc("GET /api/admin/keys", s.wrap(true, s.admin("keys.list", s.adminKeysList)))
+	mux.HandleFunc("GET /api/admin/key", s.wrap(true, s.admin("keys.reveal", s.adminKeyReveal)))
+	mux.HandleFunc("POST /api/admin/keys/generate", s.wrap(true, s.admin("keys.generate", s.adminKeyGenerate)))
+	mux.HandleFunc("POST /api/admin/keys/rename", s.wrap(true, s.admin("keys.rename", s.adminKeyRename)))
+	mux.HandleFunc("POST /api/admin/keys/delete", s.wrap(true, s.admin("keys.delete", s.adminKeyDelete)))
+	mux.HandleFunc("POST /api/admin/push", s.wrap(true, s.admin("push", s.adminPush)))
+	mux.HandleFunc("POST /api/admin/pull", s.wrap(true, s.admin("pull", s.adminPull)))
 	return s.guard(mux)
 }
 
@@ -301,7 +326,8 @@ func (s *uiServer) status(w http.ResponseWriter, r *http.Request, sess *uiSessio
 	}
 	out := map[string]any{"logged_in": true, "csrf": sess.csrf, "unlocked": true,
 		"server": cfg.Get("vault.server", ""), "email": cfg.Get("vault.email", ""),
-		"root": filepath.Base(s.root)}
+		"root": filepath.Base(s.root), "admin_enabled": s.creds.adminEnabled(),
+		"admin": sess.isAdmin(time.Now()), "admin_seconds": sess.adminSeconds(time.Now())}
 	return out, 0, nil
 }
 
@@ -322,7 +348,7 @@ func (s *uiServer) login(w http.ResponseWriter, r *http.Request, _ *uiSession) (
 		return nil, http.StatusUnauthorized, errors.New("invalid credentials")
 	}
 	s.mu.Lock()
-	okCode := verifyTOTP(s.totp, strings.TrimSpace(req.Code), now, &s.lastTOTP)
+	counter, okCode := checkTOTP(s.creds.totp, strings.TrimSpace(req.Code), now, s.lastTOTP)
 	s.mu.Unlock()
 	if !okCode || req.Password == "" {
 		return bad()
@@ -337,6 +363,12 @@ func (s *uiServer) login(w http.ResponseWriter, r *http.Request, _ *uiSession) (
 	}
 	bws, err := b.Unlock(req.Password)
 	if err != nil {
+		return bad()
+	}
+	s.mu.Lock()
+	fresh := commitTOTP(&s.lastTOTP, counter)
+	s.mu.Unlock()
+	if !fresh { // the same code was used by a concurrent attempt
 		return bad()
 	}
 	s.lim.ok(ip)

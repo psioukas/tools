@@ -1,3 +1,4 @@
+[hidden] { display: none !important; }
 :root {
   --bg: #f6f7f9; --card: #fff; --fg: #1b1f24; --muted: #667085; --line: #d9dde3;
   --accent: #2457d6; --accent-fg: #fff; --err: #b42318; --ok: #067647; --warn: #b54708;
@@ -12,8 +13,23 @@ body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.45 syste
 header { display: flex; align-items: center; gap: .75rem; padding: .75rem 1rem; border-bottom: 1px solid var(--line); background: var(--card); position: sticky; top: 0; z-index: 2; }
 header h1 { font-size: 1.1rem; margin: 0; flex: 1; }
 main { max-width: 1100px; margin: 0 auto; padding: 1rem; }
-#app { display: grid; grid-template-columns: 240px 1fr; gap: 1rem; }
-@media (max-width: 760px) { #app { grid-template-columns: 1fr; } }
+#filesview { display: grid; grid-template-columns: 240px 1fr; gap: 1rem; }
+@media (max-width: 760px) { #filesview { grid-template-columns: 1fr; } }
+#tabs { display: flex; gap: .4rem; margin-bottom: 1rem; }
+.tab[aria-selected="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--card)); font-weight: 600; }
+#adminview { display: grid; gap: 1rem; }
+.pill.admin { color: var(--warn); }
+dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--fg); width: min(92vw, 420px); padding: 1rem; }
+dialog::backdrop { background: rgb(0 0 0 / .5); }
+table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+th, td { text-align: left; padding: .45rem .4rem; border-top: 1px solid var(--line); vertical-align: middle; }
+th { color: var(--muted); font-weight: 500; border-top: 0; }
+td.mono { font-family: var(--mono); overflow-wrap: anywhere; }
+.inline { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .6rem; align-items: end; }
+.inline label { margin: 0; }
+.check { display: flex; align-items: center; gap: .5rem; color: var(--fg); }
+.check input { width: auto; min-height: 0; }
+
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 1rem; }
 #login { max-width: 420px; margin: 8vh auto; }
 label { display: block; margin: .6rem 0; font-size: .9rem; color: var(--muted); }

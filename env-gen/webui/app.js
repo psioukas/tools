@@ -15,6 +15,9 @@ const el = (tag, props = {}, ...kids) => {
 };
 
 let csrf = '';
+let status = {};
+const isAdmin = () => !!(status && status.admin);
+let allFiles = [];
 let current = null; // {path, example, vars, project, ops: Map(key -> op), added: []}
 
 async function api(method, path, body) {
@@ -27,7 +30,8 @@ async function api(method, path, body) {
   const r = await fetch(path, opts);
   let data = {};
   try { data = await r.json(); } catch (_) {}
-  if (r.status === 401 && path !== '/api/login') { showLogin(); throw new Error('Session expired'); }
+  if (r.status === 401 && path !== '/api/login' && path !== '/api/admin/elevate') { showLogin(); throw new Error('Session expired'); }
+  if (r.status === 403 && /admin/i.test(data.error || '')) refreshStatus();
   if (!r.ok) throw new Error(data.error || ('Request failed (' + r.status + ')'));
   return data;
 }
@@ -36,16 +40,25 @@ function showLogin() {
   csrf = '';
   $('app').hidden = true; $('login').hidden = false;
   $('logout').hidden = true; $('vault').hidden = true;
+  $('adminbtn').hidden = true; $('admindrop').hidden = true; $('adminpill').hidden = true; status = {};
   $('pw').value = ''; $('code').value = '';
+}
+
+async function refreshStatus() {
+  try {
+    const st = await api('GET', '/api/status');
+    if (st.logged_in) { status = st; updateAdminUI(); }
+  } catch (_) {}
 }
 
 async function start() {
   const st = await api('GET', '/api/status');
   if (!st.logged_in) return showLogin();
-  csrf = st.csrf;
+  csrf = st.csrf; status = st;
   $('login').hidden = true; $('app').hidden = false; $('logout').hidden = false;
   const pill = $('vault'); pill.hidden = false;
   pill.textContent = 'Vault unlocked' + (st.server ? ' · ' + st.server.replace(/^https?:\/\//, '') : '');
+  updateAdminUI();
   await loadProjects();
 }
 
@@ -62,6 +75,7 @@ $('logout').addEventListener('click', async () => { try { await api('POST', '/ap
 
 async function loadProjects() {
   const { projects } = await api('GET', '/api/projects');
+  allFiles = projects.flatMap((p) => p.files.map((f) => (p.dir === '.' ? f : p.dir + '/' + f)));
   const nav = $('projects'); nav.replaceChildren();
   if (!projects.length) nav.append(el('p', { class: 'muted', text: 'No .env files found under the root.' }));
   for (const p of projects) {
@@ -84,7 +98,8 @@ async function openFile(path) {
 }
 
 function defaultOp(v, project) {
-  if (v.suggest === 'vwgen') return { op: 'set', key: v.key, source: { kind: 'vwgen', item: project, field: v.key, length: 32, charset: 'alnum' } };
+  if (v.suggest === 'vwgen' && isAdmin()) return { op: 'set', key: v.key, source: { kind: 'vwgen', item: project, field: v.key, length: 32, charset: 'alnum' } };
+  if (v.suggest === 'vwgen') return { op: 'set', key: v.key, source: { kind: 'gen', length: 32, charset: 'alnum' } }; // storing in the vault needs admin
   return { op: 'set', key: v.key, source: { kind: 'literal', value: v.value || '' } };
 }
 
@@ -92,7 +107,8 @@ function defaultOp(v, project) {
 function sourceEditor(initial, project, key) {
   const s = Object.assign({ kind: 'literal', value: '', item: project || '', field: key || 'password', length: 32, charset: 'alnum' }, initial || {});
   const kind = el('select', {},
-    ...[['literal', 'Type a value'], ['gen', 'Generate random'], ['vw', 'Read from vault'], ['vwgen', 'Vault: read, or generate + store']]
+    ...[['literal', 'Type a value'], ['gen', 'Generate random'], ['vw', 'Read from vault'], ['vwgen', 'Vault: read, or generate + store (admin)']]
+      .filter(([v]) => v !== 'vwgen' || isAdmin() || s.kind === 'vwgen')
       .map(([v, t]) => el('option', { value: v, text: t })));
   kind.value = s.kind;
   const value = el('input', { type: 'password', autocomplete: 'off', value: s.value });
@@ -161,14 +177,16 @@ function describe(op) {
 function render() {
   const c = current; const box = $('editor'); box.replaceChildren();
   box.append(el('h2', { text: c.path }, c.example ? el('span', { class: 'badge', text: 'example' }) : null));
-  if (c.example) box.append(el('p', { class: 'muted', text: 'Secret-looking names are pre-set to "generate and store in vault item ' + c.project + '"; everything else keeps the example value. Adjust, then create the file below.' }));
+  if (c.example) box.append(el('p', { class: 'muted', text: 'Secret-looking names are pre-set to ' + (isAdmin() ? '"generate and store in vault item ' + c.project + '"' : '"generate" (storing in the vault needs Admin sign-in)') + '; everything else keeps the example value. Adjust, then create the file below.' }));
   const vars = [...c.vars, ...c.added];
   for (const v of vars) box.append(varRow(v));
   box.append(el('div', { class: 'actions' }, el('button', { text: '+ Add variable', onclick: addVariable })));
 
   const dir = c.path.includes('/') ? c.path.slice(0, c.path.lastIndexOf('/') + 1) : '';
   const to = c.example ? el('input', { id: 'to', value: dir + '.env' }) : null;
-  const backup = el('input', { id: 'backup', value: c.project, placeholder: 'vault item (empty = no backup)' });
+  const backup = el('input', isAdmin()
+    ? { id: 'backup', value: c.project, placeholder: 'vault item (empty = no backup)' }
+    : { id: 'backup', value: '', disabled: '', placeholder: 'Admin sign-in required' });
   const out = el('pre', { class: 'changes', id: 'result', 'aria-live': 'polite' });
   box.append(el('div', { class: 'bar' },
     to ? el('label', { text: 'Create file' }, to) : null,
@@ -226,7 +244,7 @@ function addVariable() {
 async function submit(preview) {
   const c = current; const out = $('result'); out.className = 'changes'; out.textContent = '';
   const ops = [...c.ops.values()];
-  const body = { path: c.path, ops, preview, backup_item: $('backup').value.trim() };
+  const body = { path: c.path, ops, preview, backup_item: isAdmin() ? $('backup').value.trim() : '' };
   if (c.example) body.to = $('to').value.trim();
   const btn = $('savebtn'); btn.disabled = true;
   try {
@@ -235,6 +253,152 @@ async function submit(preview) {
     out.textContent = (preview ? 'Preview of ' + r.target + ':\n' : 'Saved ' + r.path + ' (previous version kept as .bak).\n') + (lines.join('\n') || 'no changes');
     if (!preview) { out.className = 'changes ok'; await loadProjects(); }
   } catch (err) { out.className = 'changes err'; out.textContent = err.message; } finally { btn.disabled = false; }
+}
+
+// ---- admin ------------------------------------------------------------------------------
+let tick = null;
+function fmt(s) { return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+
+function updateAdminUI() {
+  const on = isAdmin();
+  $('adminbtn').hidden = !status.admin_enabled || on;
+  $('admindrop').hidden = !on;
+  $('adminpill').hidden = !on;
+  if (on) $('adminpill').textContent = 'Admin · ' + fmt(status.admin_seconds);
+  clearInterval(tick);
+  if (on) tick = setInterval(() => {
+    status.admin_seconds -= 1;
+    if (status.admin_seconds <= 0) { refreshStatus().then(afterAdminChange); return; }
+    $('adminpill').textContent = 'Admin · ' + fmt(status.admin_seconds);
+  }, 1000);
+}
+
+function afterAdminChange() {
+  updateAdminUI();
+  if (!$('adminview').hidden) renderAdmin();
+  if (current) render();
+}
+
+function showView(name) {
+  document.querySelectorAll('.tab').forEach((t) => t.setAttribute('aria-selected', String(t.dataset.view === name)));
+  $('filesview').hidden = name !== 'files';
+  $('adminview').hidden = name !== 'admin';
+  if (name === 'admin') renderAdmin();
+}
+document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => showView(t.dataset.view)));
+
+const dlg = $('admindlg');
+function openAdminDialog() { $('adminerr').textContent = ''; $('adminpw').value = ''; $('admincode').value = ''; dlg.showModal(); $('adminpw').focus(); }
+$('adminbtn').addEventListener('click', openAdminDialog);
+$('admincancel').addEventListener('click', () => dlg.close());
+$('adminform').addEventListener('submit', async (e) => {
+  e.preventDefault(); $('adminerr').textContent = '';
+  try {
+    await api('POST', '/api/admin/elevate', { passphrase: $('adminpw').value, code: $('admincode').value.trim() });
+    $('adminpw').value = ''; dlg.close();
+    await refreshStatus(); afterAdminChange();
+  } catch (err) { $('adminerr').textContent = err.message; $('adminpw').value = ''; }
+});
+$('admindrop').addEventListener('click', async () => { try { await api('POST', '/api/admin/drop'); } catch (_) {} await refreshStatus(); afterAdminChange(); });
+
+const note = () => el('p', { class: 'changes', 'aria-live': 'polite' });
+function say(p, ok, text) { p.className = 'changes ' + (ok ? 'ok' : 'err'); p.textContent = text; }
+function itemInput(value) { ensureDatalists(); const i = el('input', { list: 'items', value: value || '', autocomplete: 'off', placeholder: 'vault item name' }); let t; i.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => fillItems(i.value), 250); }); return i; }
+const checkbox = (label, checked) => { const c = el('input', { type: 'checkbox' }); c.checked = !!checked; return { el: el('label', { class: 'check' }, c, label), get: () => c.checked }; };
+
+function renderAdmin() {
+  const v = $('adminview'); v.replaceChildren();
+  if (!status.admin_enabled) {
+    v.append(el('section', { class: 'card' }, el('h2', { text: 'Admin not configured' }), el('p', { class: 'muted', text: 'Run "env-gen ui admin-init" on the server to enable vault keys, push and pull.' })));
+    return;
+  }
+  if (!isAdmin()) {
+    v.append(el('section', { class: 'card' }, el('h2', { text: 'Admin sign-in required' }),
+      el('p', { class: 'muted', text: 'Vault keys, push and pull need the admin passphrase and the separate admin authenticator code.' }),
+      el('button', { class: 'primary', text: 'Admin sign-in', onclick: openAdminDialog })));
+    return;
+  }
+  v.append(keysCard(), pushCard(), pullCard());
+}
+
+function keysCard() {
+  const item = itemInput(''); const out = note(); const table = el('div', {});
+  const load = async (clear = true) => {
+    if (clear) out.textContent = '';
+    try {
+      const r = await api('GET', '/api/admin/keys?item=' + encodeURIComponent(item.value.trim()));
+      table.replaceChildren();
+      if (!r.fields.length) { table.append(el('p', { class: 'muted', text: 'No custom fields in this item.' })); return; }
+      const tb = el('tbody');
+      for (const f of r.fields) {
+        const val = el('td', { class: 'mono', text: '(' + f.length + ' chars)' });
+        const reveal = el('button', { class: 'ghost', text: 'Reveal', onclick: async () => {
+          if (reveal.dataset.on) { val.textContent = '(' + f.length + ' chars)'; reveal.textContent = 'Reveal'; delete reveal.dataset.on; return; }
+          try { val.textContent = (await api('GET', '/api/admin/key?item=' + encodeURIComponent(r.item) + '&key=' + encodeURIComponent(f.name))).value; reveal.textContent = 'Hide'; reveal.dataset.on = '1'; } catch (e) { say(out, false, e.message); }
+        } });
+        const act = async (fn) => { try { await fn(); await load(false); } catch (e) { say(out, false, e.message); } };
+        tb.append(el('tr', {}, el('td', { class: 'mono', text: f.name }), el('td', { text: f.type }), val,
+          el('td', {}, el('div', { class: 'actions' }, reveal,
+            el('button', { text: 'Rotate', onclick: () => confirm('Replace ' + f.name + ' with a new random value? Files already written keep the old one.') && act(async () => { await api('POST', '/api/admin/keys/generate', { item: r.item, field: f.name, length: Math.min(128, Math.max(5, f.length || 32)), charset: 'alnum', replace: true }); say(out, true, 'Rotated ' + f.name); }) }),
+            el('button', { text: 'Rename', onclick: () => { const n = prompt('New name for ' + f.name, f.name); if (n && n !== f.name) act(async () => { await api('POST', '/api/admin/keys/rename', { item: r.item, old: f.name, new: n }); say(out, true, 'Renamed'); }); } }),
+            el('button', { class: 'danger', text: 'Delete', onclick: () => confirm('Delete ' + f.name + ' from the vault item?') && act(async () => { await api('POST', '/api/admin/keys/delete', { item: r.item, keys: [f.name] }); say(out, true, 'Deleted ' + f.name); }) })))));
+      }
+      table.append(el('table', {}, el('thead', {}, el('tr', {}, ...['Field', 'Type', 'Value', ''].map((t) => el('th', { text: t })))), tb));
+    } catch (e) { table.replaceChildren(); say(out, false, e.message); }
+  };
+  const field = el('input', { placeholder: 'FIELD_NAME', autocomplete: 'off' });
+  const length = el('input', { type: 'number', min: '5', max: '128', value: '32' });
+  const charset = el('select', {}, ...['alnum', 'hex', 'symbols'].map((c) => el('option', { value: c, text: c })));
+  const replace = checkbox('Replace if it exists (rotate)', false);
+  const gen = el('button', { class: 'primary', text: 'Generate key', onclick: async () => {
+    try {
+      await api('POST', '/api/admin/keys/generate', { item: item.value.trim(), field: field.value.trim(), length: parseInt(length.value, 10) || 32, charset: charset.value, replace: replace.get() });
+      say(out, true, 'Generated ' + field.value.trim() + ' in ' + item.value.trim() + ' (value not shown; use Reveal).'); await load(false);
+    } catch (e) { say(out, false, e.message); }
+  } });
+  return el('section', { class: 'card' }, el('h2', { text: 'Vault keys' }),
+    el('div', { class: 'inline' }, el('label', { text: 'Vault item' }, item), el('button', { text: 'Load fields', onclick: () => load() })), table,
+    el('h2', { text: 'Generate a key' }),
+    el('div', { class: 'inline' }, el('label', { text: 'Field' }, field), el('label', { text: 'Length (5-128)' }, length), el('label', { text: 'Characters' }, charset)),
+    replace.el, el('div', { class: 'actions' }, gen), out);
+}
+
+function projectOf(path) { const p = path.split('/'); return p.length > 1 ? p[p.length - 2] : 'project'; }
+
+function pushCard() {
+  const file = el('select', {}, ...allFiles.filter((f) => !/\.(example|sample|dist)$/.test(f)).map((f) => el('option', { value: f, text: f })));
+  const item = itemInput(file.value ? projectOf(file.value) : '');
+  file.addEventListener('change', () => { item.value = projectOf(file.value); });
+  const force = checkbox('Overwrite fields that already exist in the item', false);
+  const tpl = checkbox('Also write a .env.template pointing at the vault', true);
+  const out = note();
+  return el('section', { class: 'card' }, el('h2', { text: 'Push a .env into the vault' }),
+    el('p', { class: 'muted', text: 'Stores every variable as a hidden field of the vault item.' }),
+    el('div', { class: 'inline' }, el('label', { text: 'File' }, file), el('label', { text: 'Vault item' }, item)), force.el, tpl.el,
+    el('div', { class: 'actions' }, el('button', { class: 'primary', text: 'Push', onclick: async () => {
+      try {
+        const r = await api('POST', '/api/admin/push', { path: file.value, item: item.value.trim(), force: force.get(), template: tpl.get() });
+        say(out, true, 'Pushed ' + r.pushed + ' variables to ' + r.item + (r.template ? '. Template: ' + r.template : '.'));
+      } catch (e) { say(out, false, e.message); }
+    } })), out);
+}
+
+function pullCard() {
+  const item = itemInput('');
+  const dirs = [...new Set(allFiles.map((f) => (f.includes('/') ? f.slice(0, f.lastIndexOf('/') + 1) : '')))];
+  const to = el('input', { value: dirs[0] !== undefined ? dirs[0] + '.env' : '.env', autocomplete: 'off', list: 'pullto' });
+  const dl = el('datalist', { id: 'pullto' }, ...dirs.map((d) => el('option', { value: d + '.env' })));
+  const force = checkbox('Overwrite the target file (the old one is kept as .bak)', false);
+  const out = note();
+  return el('section', { class: 'card' }, el('h2', { text: 'Pull a vault item into a .env' }), dl,
+    el('div', { class: 'inline' }, el('label', { text: 'Vault item' }, item), el('label', { text: 'Write to' }, to)), force.el,
+    el('div', { class: 'actions' }, el('button', { class: 'primary', text: 'Pull', onclick: async () => {
+      try {
+        const r = await api('POST', '/api/admin/pull', { item: item.value.trim(), to: to.value.trim(), force: force.get() });
+        say(out, true, 'Wrote ' + r.written + ' variables to ' + r.path + (r.skipped && r.skipped.length ? ' (skipped: ' + r.skipped.join(', ') + ')' : ''));
+        loadProjects();
+      } catch (e) { say(out, false, e.message); }
+    } })), out);
 }
 
 start().catch((e) => { showLogin(); $('loginerr').textContent = e.message; });

@@ -77,7 +77,8 @@ Comments, blank lines, ordering and `export` prefixes are preserved. Changing a 
 `env-gen ui` serves an editor you can open from any browser, such as an Android tablet: browse projects, open a `.env` or `.env.example`, change / rename / delete / add variables, pick a source per variable (typed, generated, vault read, vault read-or-generate), preview the diff, save, create `.env` from an example, and back up everything to a vault item. Secret-looking values are never sent to the browser until you press Reveal. The pages are embedded in the binary.
 
 ```
-env-gen ui init      # once: creates a 2FA (TOTP) secret; add the key to an authenticator app
+env-gen ui init      # once: creates the editor 2FA (TOTP) secret; add the key to an authenticator app
+env-gen ui admin-init   # once, optional: admin passphrase + separate admin authenticator key (see below)
 env-gen ui -root ~/projects -host vault.example.com -trust-proxy      # listens on 127.0.0.1:8765
 ```
 
@@ -106,7 +107,21 @@ Run it under systemd or tmux. For development without a proxy: `env-gen ui -inse
 - **Strict CSP**, no inline scripts, `no-store` caching, HSTS, and allowed `-host` names only (blocks DNS rebinding).
 - **File access is sandboxed** to `-root`: only `.env`-style names, no `..`, no symlink escapes, files written 0600 with the previous version kept as `.bak`.
 - The server needs the Bitwarden CLI logged in (`env-gen setup` on the VM first). The UI ignores the on-disk session cache and `BW_SESSION`: only a UI login can open the vault there.
-- Not built into the UI (use the CLI): `keys` management, `push`/`pull`, offline mode, setup.
+- Not built into the UI (use the CLI): offline mode and setup.
+
+**Admin sign-in (keys, push, pull, vault storing).** Everything that creates or changes things in the vault needs a second, separate credential, so the editor login alone can't do it:
+
+```
+env-gen ui admin-init     # sets an admin passphrase (12+ chars) and prints a SEPARATE authenticator key
+```
+
+| Needs only the editor login | Needs admin sign-in (5 minutes, `-admin-ttl`) |
+|---|---|
+| browse and edit `.env` files, typed or generated values, vault reads (`vw`), search | vault key list / reveal / generate / rotate / rename / delete |
+| preview, save, create from `.env.example` | push a `.env` into the vault, pull a vault item into a `.env` |
+| | storing values in the vault from the editor: backup item, "generate + store" (`vwgen`) |
+
+The admin passphrase is stored only as a PBKDF2-SHA256 hash in `ui.json` (0600), the admin authenticator secret is different from the editor one, its failures have their own rate limit and lockout, and elevation is per session and can be dropped at any time. Every admin action is written to the server log (`audit ...` lines: action, client IP, item and field names, never values). If `admin-init` hasn't been run, the admin features stay disabled. The UI never returns a generated secret in the response; use Reveal to read it.
 
 ## Shell auto-completion
 

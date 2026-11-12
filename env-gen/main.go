@@ -214,7 +214,7 @@ func main() {
 
 	switch {
 	case isEdit:
-		file := ".env"
+		file := "" // empty: ask which file (or .env when scripted with -set/-unset)
 		if fs.NArg() > 0 {
 			file = fs.Arg(0)
 		}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -64,5 +65,56 @@ func TestSessionCache(t *testing.T) {
 	saveSession("x")
 	if loadSession() != "" {
 		t.Fatal("expired session returned")
+	}
+}
+
+func TestSetKeepsInlineComment(t *testing.T) {
+	d := &envDoc{lines: []string{`A=1 # first`, `B="x # y" # second`, `C='q'`, `export D=4`}}
+	d.set("A", "2")
+	d.set("B", `"new val"`)
+	d.set("C", "3")
+	d.set("D", "5")
+	want := []string{`A=2 # first`, `B="new val" # second`, `C=3`, `export D=5`}
+	for i, w := range want {
+		if d.lines[i] != w {
+			t.Errorf("line %d: got %q want %q", i, d.lines[i], w)
+		}
+	}
+}
+
+func TestVarLabel(t *testing.T) {
+	orig := map[string]string{"PORT": "3000", "DB_PASSWORD": "s3cret", "OLD": "x"}
+	cases := []struct {
+		k, v   string
+		reveal bool
+		want   string
+	}{
+		{"PORT", "3000", false, `PORT="3000"`},
+		{"PORT", "4000", false, `PORT="4000"   (modified)`},
+		{"DB_PASSWORD", "s3cret", false, `DB_PASSWORD="••••••••"`},
+		{"DB_PASSWORD", "s3cret", true, `DB_PASSWORD="s3cret"`},
+		{"NEW_ONE", "a b", false, `NEW_ONE="a b"   (new)`},
+		{"EMPTY", "", false, `EMPTY=""   (new)`},
+	}
+	for _, c := range cases {
+		if got := varLabel(c.k, c.v, c.reveal, orig); got != c.want {
+			t.Errorf("got %s want %s", got, c.want)
+		}
+	}
+}
+
+func TestEnvCandidates(t *testing.T) {
+	dir := t.TempDir()
+	for _, n := range []string{".env.production", ".env", "app.env", ".env.bak", "notes.txt", ".env.example"} {
+		os.WriteFile(filepath.Join(dir, n), []byte("A=1\n"), 0o600)
+	}
+	os.Mkdir(filepath.Join(dir, ".env.d"), 0o755)
+	wd, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(wd)
+	got := envCandidates()
+	want := []string{".env", ".env.example", ".env.production", "app.env"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("got %v want %v", got, want)
 	}
 }

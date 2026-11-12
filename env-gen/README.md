@@ -65,12 +65,18 @@ Precedence: command-line flags, then `BW_BIN`, then the config file, then built-
 ## Editing an existing .env
 
 ```
-env-gen edit              # menu for ./.env: change, rename, delete, add variables
-env-gen edit app/.env
-env-gen edit -set PORT=4000 -set 'TOKEN={{vwgen:myapp/TOKEN:32}}' -unset OLD_VAR -backup myapp   # no prompts
+env-gen edit                  # in a directory with .env files: pick the file, then edit interactively
+env-gen edit .env.production  # skip the file prompt
+env-gen edit -set PORT=4000 -set 'TOKEN={{vwgen:myapp/TOKEN:32}}' -unset OLD_VAR -backup myapp   # no prompts (defaults to ./.env)
 ```
 
-Comments, blank lines, ordering and `export` prefixes are preserved. Changing a value offers the same sources as `new` (literal, hidden secret, generate, vault read, vault read-or-generate), and the current value is prefilled for literals. Secret-looking values are masked in the menu. Before saving you see a `+ ~ -` summary of changed variable names; the previous file is kept as `FILE.bak` (0600), and the interactive save offers the same "back up ALL variables to a vault item" step as `new`. In scripted mode the backup only happens with `-backup ITEM`. `-dry-run` prints the result instead of writing.
+The interactive flow:
+1. **Pick a file.** With several `.env`-style files in the directory (`.env`, `.env.production`, `app.env`, ...) you are asked which one; with a single one it opens directly.
+2. **Browse the variables** with the arrow keys (`/` filters). Each entry is shown as `KEY="value"`, tagged `(modified)` or `(new)` when changed in this session. Secret-looking values (`PASSWORD`, `TOKEN`, `SECRET`, ...) are masked as `••••••••`; choose "Show secret values" in the list to reveal them.
+3. **Select a variable** and choose: edit it inline (the current value is prefilled, change it in place), enter a new value (hidden while typing for secret-looking names), generate or take it from the vault, rename it, or delete it (with a confirmation).
+4. **Done** shows a `+ ~ -` summary of changed variable names, then asks to save. The previous file is kept as `FILE.bak` (0600), and the save offers the same "back up ALL variables to a vault item" step as `new`.
+
+Comments, blank lines, ordering, `export` prefixes and inline `# comments` on a changed line are preserved. In scripted mode the backup only happens with `-backup ITEM`, and `-dry-run` prints the result instead of writing.
 
 ## Web UI (behind your HTTPS reverse proxy)
 

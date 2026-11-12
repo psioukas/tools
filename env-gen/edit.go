@@ -225,7 +225,7 @@ func runEdit(res *cliResolver, file string, sets, unsets []string, backup string
 	if len(sets)+len(unsets) == 0 { // interactive: confirm + vault backup choice
 		ok := false
 		fields := []huh.Field{}
-		if !offline {
+		if !offline && !noBackup {
 			if backup == "" {
 				backup = project
 			}

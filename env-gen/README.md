@@ -149,6 +149,15 @@ env-gen lock       # clear the cached session (and run bw lock)
 
 The unlock session (`BW_SESSION`) is cached in `~/.cache/env-gen/session` (override `ENV_GEN_SESSION`) with mode 0600 and an expiry, and every command picks it up when `BW_SESSION` isn't exported. In a terminal, a command that needs the vault and finds none just prompts to unlock. A cached key is a bearer key to your vault until it expires, so keep the TTL short: `env-gen config set session.ttl 15m`, or turn it off with `env-gen config set session.cache off`. A cache file readable by others is ignored. `env-gen cache list` shows whether a session is cached (never the key).
 
+## Machine interface (used by fleet)
+
+```
+env-gen vault get ITEM            # JSON object of the item's custom fields on stdout (exit 3: item not found)
+echo '{"A":"1"}' | env-gen vault set [-force] ITEM
+```
+
+`vault set` stores each pair as a hidden custom field, creating the item if needed; `-force` overwrites fields that exist. `env-gen edit -no-backup FILE` skips the vault-backup step in the editor.
+
 ## Managing stored keys
 
 ```

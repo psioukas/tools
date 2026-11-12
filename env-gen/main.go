@@ -110,6 +110,7 @@ const usage = `usage:
   env-gen ui init | ui -root DIR -host H -trust-proxy   web UI (behind your HTTPS reverse proxy)
   env-gen completion bash|zsh|fish|install       shell auto-completion
   env-gen unlock | lock                          unlock the vault (session cached briefly) / clear it
+  env-gen vault get ITEM | set [-force] ITEM     JSON interface to a vault item (used by fleet)
   env-gen keys list|show|rm|rename|rotate ...    manage the fields stored in a vault item
   env-gen cache [list|clear|path]                recently used vault item/field names (no secrets)
   env-gen config [list|path|get K|set K V|unset K]   settings file in your user config dir
@@ -165,6 +166,8 @@ func main() {
 			os.Exit(runCompletion(args[1:]))
 		case "__complete":
 			os.Exit(runComplete(args[1:]))
+		case "vault":
+			os.Exit(runVault(args[1:]))
 		case "keys":
 			os.Exit(runKeys(args[1:]))
 		case "unlock":
@@ -191,12 +194,14 @@ func main() {
 	backup := fs.String("backup", "", "also store every rendered variable in this vault item (template / -set modes)")
 	offlineFlag := fs.Bool("offline", false, "one-time mode: no vault access, secrets generated locally with bw generate, nothing stored")
 	genFlag := fs.String("generator", cfg.Get("defaults.generator", "builtin"), "secret generator: builtin | bw (Bitwarden password generator)")
+	noBackupFlag := fs.Bool("no-backup", false, "edit: don't offer the vault backup step")
 	var sets, unsets multiFlag
 	fs.Var(&unsets, "unset", "KEY to remove (edit mode, repeatable)")
 	fs.Var(&sets, "set", "KEY=VALUE entry (repeatable); value may contain placeholders")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage); fs.PrintDefaults() }
 	fs.Parse(args)
 
+	noBackup = *noBackupFlag
 	offline, generatorMode = *offlineFlag, *genFlag
 	if generatorMode != "builtin" && generatorMode != "bw" {
 		fmt.Fprintln(os.Stderr, "error: -generator must be builtin or bw")

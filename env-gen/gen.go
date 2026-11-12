@@ -11,6 +11,9 @@ import (
 // offline disables every vault operation (read, store, backup); generation stays local.
 var offline bool
 
+// noBackup hides the vault backup step in `edit` (set by -no-backup).
+var noBackup bool
+
 // generatorMode selects how {{gen}}/{{vwgen}} secrets are produced:
 // "builtin" (crypto/rand) or "bw" (the Bitwarden password generator, `bw generate`,
 // which runs locally and needs neither login nor network).

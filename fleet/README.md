@@ -84,6 +84,32 @@ The env file is the source of what containers read at start. A `docker` target m
 - `container` also lets `status` compare the running container's environment (`docker inspect`) with what should be there and flag "running container differs", which catches a push that was never reloaded.
 - `context` selects a docker context for local commands. When `host` is set, commands run on the host over ssh and `context` is not used.
 
+## Web UI
+
+`fleet ui` serves the same operations in a browser (an Android tablet works well), behind your own HTTPS reverse proxy. It uses the same hardened model as `env-gen ui`.
+
+```
+fleet ui init               # once: editor 2FA secret (TOTP); add the key to an authenticator app
+fleet ui admin-init         # once: admin passphrase + a SEPARATE authenticator key
+fleet ui -host fleet.example.com -trust-proxy     # listens on 127.0.0.1:8766; development: -insecure-http
+```
+
+Proxy snippets are the same as for `env-gen ui` (Caddy: `reverse_proxy 127.0.0.1:8766`; nginx: pass `Host` and set `X-Forwarded-Proto` and `X-Forwarded-For` yourself).
+
+| Screen | What you can do | Needs |
+|---|---|---|
+| **Apps** | every app and target with a state chip (in sync, drifted, file missing, error), the names of missing / changed / extra variables, and stale running containers; **Check** refreshes | login |
+| | **Push** one target or the selected ones (optionally prune, optionally run the reload command); **Pull...** shows what would be imported, then stores it in the vault | admin |
+| **Vault variables** | the variables of the vault items named in `apps.yaml` (names and lengths only) | login |
+| | reveal a value, set, rename, delete, add a variable | admin |
+| **Activity** | what you did in this session | login |
+
+- **Login** is your Vaultwarden master password plus the editor authenticator code. The master password is handed to `env-gen vault unlock` on stdin; the vault session key then lives only in the server's memory (never on disk, never in the browser) and is passed to `env-gen` through its environment for each request.
+- **Admin sign-in** (separate passphrase + separate authenticator code, 5 minutes) is required for everything that changes a machine or the vault. Without it the buttons are locked and ask you to sign in.
+- **No values on screen** unless an admin reveals one: state, diffs, pull plans and push results carry variable names only. The UI can only touch vault items that `apps.yaml` refers to, never other entries.
+- Same protections as `env-gen ui`: rate-limited and single-use 2FA codes, `__Host-` secure cookie, CSRF token plus same-origin check, strict content policy, `-host` allow-list, https-only behind the proxy, idle timeout 15 minutes, one change at a time, and an `audit` line in the server log for every admin action (action, client IP, app/target/item and variable names, never values).
+- `apps.yaml` is re-read on every request, so edits show up without a restart.
+
 ## Adding a driver
 
 A driver is one small interface in `driver.go`: `Describe`, `Read`, `Write` and `Reload` (plus the optional `RuntimeChecker`). Implement it, add it to `registry`, and allow its name in `Target.validate`. Kubernetes secrets, a cloud secret store, or a daemon on the VM would each be one more driver.
@@ -93,5 +119,5 @@ A driver is one small interface in `driver.go`: `Describe`, `Read`, `Write` and 
 - `env-gen` on the machine that runs fleet (or `FLEET_ENVGEN=/path`), with its vault session available (`env-gen unlock`; the session cache is on by default). `fleet` itself talks to no vault API.
 - ssh access (`ssh` on the PATH, or `FLEET_SSH=/path`), key-based: fleet runs ssh with `BatchMode=yes`. Remote hosts need a POSIX shell with `cat`, `cp`, `mv`.
 - `docker` CLI for docker targets.
-- Targets are processed one at a time. Tested on Linux only.
+- Targets are looked at and written in parallel (4 at a time; `-j N` on `status`, `push` and `ui`). Tested on Linux only.
 - The first version has no agent: hosts that cannot take inbound ssh are not reachable yet (an agent driver would fit the same interface).

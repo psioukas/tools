@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 )
 
 // runVault is the machine-readable vault interface other tools (fleet) call:
@@ -17,11 +19,26 @@ import (
 // prompts and errors go to stderr.
 func runVault(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: env-gen vault get ITEM | env-gen vault set [-force] ITEM")
+		fmt.Fprintln(os.Stderr, "usage: env-gen vault get ITEM | env-gen vault set [-force] ITEM | env-gen vault unlock")
 		return 2
 	}
 	cmd, rest := args[0], args[1:]
 	switch cmd {
+	case "unlock":
+		// For programs that hold the master password themselves (fleet's web UI): the password
+		// is read from stdin (one line), the session key is printed to stdout and is NOT cached on disk.
+		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+		pw := strings.TrimRight(line, "\r\n")
+		if pw == "" {
+			fmt.Fprintln(os.Stderr, "error: no password on stdin")
+			return 2
+		}
+		sess, err := NewBw().Unlock(pw)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error: unlock failed:", err)
+			return 1
+		}
+		fmt.Println(sess)
 	case "get":
 		if len(rest) != 1 {
 			fmt.Fprintln(os.Stderr, "usage: env-gen vault get ITEM")
@@ -82,7 +99,7 @@ func runVault(args []string) int {
 		recordItem(fs.Arg(0))
 		fmt.Fprintf(os.Stderr, "stored %d variables in %q\n", len(pairs), fs.Arg(0))
 	default:
-		fmt.Fprintln(os.Stderr, "usage: env-gen vault get ITEM | env-gen vault set [-force] ITEM")
+		fmt.Fprintln(os.Stderr, "usage: env-gen vault get ITEM | env-gen vault set [-force] ITEM | env-gen vault unlock")
 		return 2
 	}
 	return 0

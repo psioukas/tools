@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>fleet</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>fleet</h1>
+  <span id="vault" class="pill" hidden>Vault unlocked</span>
+  <span id="adminpill" class="pill admin" hidden></span>
+  <button id="adminbtn" class="ghost" hidden>Admin sign-in</button>
+  <button id="admindrop" class="ghost" hidden>Drop admin</button>
+  <button id="logout" class="ghost" hidden>Log out</button>
+</header>
+<main>
+  <section id="login" class="card" hidden>
+    <h2>Unlock</h2>
+    <form id="loginform" autocomplete="off">
+      <label>Vaultwarden master password
+        <input id="pw" type="password" autocomplete="current-password" required>
+      </label>
+      <label>Authenticator code
+        <input id="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required>
+      </label>
+      <button type="submit" class="primary">Unlock</button>
+      <p id="loginerr" class="err" role="alert"></p>
+    </form>
+  </section>
+
+  <div id="app" hidden>
+    <div id="tabs" role="tablist">
+      <button class="tab" role="tab" data-view="overview" aria-selected="true">Apps</button>
+      <button class="tab" role="tab" data-view="vault" aria-selected="false">Vault variables</button>
+      <button class="tab" role="tab" data-view="log" aria-selected="false">Activity</button>
+    </div>
+    <div id="overview"></div>
+    <div id="vaultview" hidden></div>
+    <div id="logview" hidden></div>
+  </div>
+
+  <dialog id="admindlg">
+    <form id="adminform" autocomplete="off">
+      <h2>Admin sign-in</h2>
+      <p class="muted">Needed to push to machines, pull into the vault and edit vault values. Lasts a few minutes.</p>
+      <label>Admin passphrase
+        <input id="adminpw" type="password" autocomplete="off" required>
+      </label>
+      <label>Admin authenticator code
+        <input id="admincode" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required>
+      </label>
+      <div class="actions">
+        <button type="submit" class="primary">Sign in</button>
+        <button type="button" id="admincancel">Cancel</button>
+      </div>
+      <p id="adminerr" class="err" role="alert"></p>
+    </form>
+  </dialog>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

@@ -63,8 +63,10 @@ func cmdApps(args []string) int {
 
 func cmdStatus(args []string) int {
 	var check *bool
+	var jobs *int
 	e, fs, err := setup("status", args, func(fs *flag.FlagSet) {
 		check = fs.Bool("check", false, "exit 1 if anything is drifted or unreachable (for CI/cron)")
+		jobs = fs.Int("j", defaultJobs, "targets to look at in parallel")
 	})
 	if err != nil {
 		return fail(err)
@@ -79,37 +81,35 @@ func cmdStatus(args []string) int {
 		if !ok {
 			return fail(fmt.Errorf("unknown app %q", an))
 		}
+		var ts []*Target
+		for _, tn := range a.targetNames() {
+			ts = append(ts, a.Targets[tn])
+		}
 		fmt.Println(an)
 		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		for _, tn := range a.targetNames() {
-			t := a.Targets[tn]
-			st, err := e.inspect(a, t)
-			if err != nil {
-				fmt.Fprintf(tw, "  %s\t%s\t✗ %v\n", tn, t.Driver, err)
+		for _, s := range e.status(a, ts, *jobs) {
+			var line string
+			switch s.State {
+			case "error":
+				line = "\u2717 " + s.Error
 				bad = true
-				continue
-			}
-			line := "✓ in sync"
-			switch {
-			case !st.exists:
-				line = fmt.Sprintf("~ file missing (%d to create)", len(st.want))
+			case "missing":
+				line = fmt.Sprintf("~ file missing (%d to create)", len(s.Missing)+len(s.Changed))
 				bad = true
-			case st.d.drifted():
-				mark := "~"
-				if st.d.empty() {
-					mark = "·" // only extra keys on the target: informational
-				} else {
-					bad = true
-				}
-				line = fmt.Sprintf("%s drifted: %s", mark, st.d.summary())
-			}
-			if rc, ok := st.drv.(RuntimeChecker); ok {
-				if names, err := rc.RuntimeDiffers(e.ctx, st.want); err == nil && len(names) > 0 {
-					line += fmt.Sprintf("; running container differs on %d (restart/recreate needed)", len(names))
-					bad = true
+			case "drifted":
+				line = "~ drifted: " + summaryOf(s)
+				bad = true
+			default:
+				line = "\u2713 in sync"
+				if len(s.Extra) > 0 {
+					line = fmt.Sprintf("\u00b7 in sync (%d extra on the target)", len(s.Extra))
 				}
 			}
-			fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", tn, t.Driver, st.drv.Describe(), line)
+			if len(s.Stale) > 0 {
+				line += fmt.Sprintf("; running app differs on %d (restart/recreate needed)", len(s.Stale))
+				bad = true
+			}
+			fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", s.Target, s.Driver, s.Where, line)
 		}
 		tw.Flush()
 	}
@@ -117,6 +117,10 @@ func cmdStatus(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+func summaryOf(s TargetStatus) string {
+	return diff{missing: s.Missing, changed: s.Changed, extra: s.Extra}.summary()
 }
 
 // ---- diff -----------------------------------------------------------------------------------------
@@ -175,11 +179,13 @@ func printDiff(st *state, values, showExtra bool) {
 
 func cmdPush(args []string) int {
 	var yes, dry, prune, reload *bool
+	var jobs *int
 	e, fs, err := setup("push", args, func(fs *flag.FlagSet) {
 		yes = fs.Bool("y", false, "don't ask for confirmation")
 		dry = fs.Bool("dry-run", false, "show the plan and change nothing")
 		prune = fs.Bool("prune", false, "also remove variables that are only on the target")
 		reload = fs.Bool("reload", false, "run each target's reload command after a change")
+		jobs = fs.Int("j", defaultJobs, "targets to process in parallel")
 	})
 	if err != nil {
 		return fail(err)
@@ -188,25 +194,24 @@ func cmdPush(args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	return e.push(a, targets, *yes, *dry, *prune, *reload)
+	return e.push(a, targets, *yes, *dry, *prune, *reload, *jobs)
 }
 
-func (e *env) push(a *App, targets []*Target, yes, dry, prune, reload bool) int {
+func (e *env) push(a *App, targets []*Target, yes, dry, prune, reload bool, jobs int) int {
 	var todo []*state
 	rc := 0
-	for _, t := range targets {
-		fmt.Printf("%s/%s\n", t.app, t.name)
-		st, err := e.inspect(a, t)
-		if err != nil {
-			fmt.Printf("  ✗ %v\n", err)
+	for _, r := range e.inspectAll(a, targets, jobs) {
+		fmt.Printf("%s/%s\n", r.T.app, r.T.name)
+		if r.Err != nil {
+			fmt.Printf("  \u2717 %v\n", r.Err)
 			rc = 1
 			continue
 		}
-		printDiff(st, false, prune)
-		if st.d.empty() && !(prune && len(st.d.extra) > 0) {
+		printDiff(r.St, false, prune)
+		if r.St.d.empty() && !(prune && len(r.St.d.extra) > 0) {
 			continue
 		}
-		todo = append(todo, st)
+		todo = append(todo, r.St)
 	}
 	if len(todo) == 0 {
 		fmt.Println("nothing to push")
@@ -220,46 +225,28 @@ func (e *env) push(a *App, targets []*Target, yes, dry, prune, reload bool) int 
 		fmt.Fprintln(os.Stderr, "cancelled")
 		return 1
 	}
-	for _, st := range todo {
-		t := st.t
-		d := parseDoc(st.raw)
-		for _, k := range append(append([]string{}, st.d.missing...), st.d.changed...) {
-			d.set(k, st.want[k])
+	for _, r := range e.apply(todo, prune, reload, jobs) {
+		id := r.App + "/" + r.Target
+		if r.Wrote {
+			fmt.Printf("%s: wrote %s (previous kept as .bak)\n", id, r.Where)
 		}
-		if prune {
-			for _, k := range st.d.extra {
-				d.del(k)
+		switch r.Reload {
+		case "ok":
+			fmt.Printf("%s: reloaded\n", id)
+		case "none":
+			fmt.Printf("%s: no reload command configured\n", id)
+		case "skipped":
+			if r.Hint {
+				fmt.Printf("%s: not reloaded (use -reload to run the reload command)\n", id)
 			}
 		}
-		if err := st.drv.Write(e.ctx, d.bytes()); err != nil {
-			fmt.Fprintf(os.Stderr, "%s/%s: write failed: %v\n", t.app, t.name, err)
-			rc = 1
-			continue
-		}
-		fmt.Printf("%s/%s: wrote %s (previous kept as .bak)\n", t.app, t.name, st.drv.Describe())
-		switch err := func() error {
-			if !reload {
-				return errSkipped
-			}
-			return st.drv.Reload(e.ctx)
-		}(); {
-		case err == nil:
-			fmt.Printf("%s/%s: reloaded\n", t.app, t.name)
-		case err == errSkipped:
-			if t.Reload != "" || t.Service != "" || t.Container != "" {
-				fmt.Printf("%s/%s: not reloaded (use -reload to run the reload command)\n", t.app, t.name)
-			}
-		case err == errNoReload:
-			fmt.Printf("%s/%s: no reload command configured\n", t.app, t.name)
-		default:
-			fmt.Fprintf(os.Stderr, "%s/%s: reload failed: %v\n", t.app, t.name, err)
+		if r.Err != "" {
+			fmt.Fprintf(os.Stderr, "%s: %s\n", id, r.Err)
 			rc = 1
 		}
 	}
 	return rc
 }
-
-var errSkipped = fmt.Errorf("skipped")
 
 // ---- pull -----------------------------------------------------------------------------------------
 
@@ -279,79 +266,35 @@ func cmdPull(args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	t := targets[0]
-	drv, err := newDriver(t)
+	p, err := e.planPull(a, targets[0])
 	if err != nil {
 		return fail(err)
 	}
-	raw, exists, err := drv.Read(e.ctx)
-	if err != nil {
-		return fail(fmt.Errorf("cannot read %s: %w", drv.Describe(), err))
+	if p.Creating {
+		fmt.Printf("vault item %q will be created\n", p.Item)
 	}
-	if !exists {
-		return fail(fmt.Errorf("%s does not exist", drv.Describe()))
-	}
-	skip := map[string]bool{}
-	for _, k := range append(append([]string{}, a.Exclude...), t.Exclude...) {
-		skip[k] = true
-	}
-	for k := range t.Overrides { // per-target values are not the shared truth
-		skip[k] = true
-	}
-	only := map[string]bool{}
-	for _, k := range t.Include {
-		only[k] = true
-	}
-	incoming := map[string]string{}
-	for k, v := range parseDoc(raw).values() {
-		if !skip[k] && (len(only) == 0 || only[k]) {
-			incoming[k] = v
-		}
-	}
-	item := t.item(a)
-	current, err := e.vault.get(item)
-	if err == errItemMissing {
-		current, err = map[string]string{}, nil
-		fmt.Printf("vault item %q will be created\n", item)
-	}
-	if err != nil {
-		return fail(err)
-	}
-	var add, upd []string
-	changes := map[string]string{}
-	for _, k := range sortedKeys(incoming) {
-		cv, ok := current[k]
-		switch {
-		case !ok:
-			add = append(add, k)
-			changes[k] = incoming[k]
-		case cv != incoming[k]:
-			upd = append(upd, k)
-			changes[k] = incoming[k]
-		}
-	}
-	fmt.Printf("%s/%s -> vault item %q\n", t.app, t.name, item)
-	for _, k := range add {
+	fmt.Printf("%s/%s -> vault item %q\n", p.T.app, p.T.name, p.Item)
+	for _, k := range p.Add {
 		fmt.Printf("  + %s\n", k)
 	}
-	for _, k := range upd {
+	for _, k := range p.Upd {
 		fmt.Printf("  ~ %s\n", k)
 	}
-	if len(changes) == 0 {
+	if len(p.Changes) == 0 {
 		fmt.Println("  vault already matches")
 		return 0
 	}
 	if *dry {
 		return 0
 	}
-	if !*yes && !confirm(fmt.Sprintf("Store %d variable(s) in the vault?", len(changes))) {
+	if !*yes && !confirm(fmt.Sprintf("Store %d variable(s) in the vault?", len(p.Changes))) {
 		fmt.Fprintln(os.Stderr, "cancelled")
 		return 1
 	}
-	if err := e.vault.set(item, changes); err != nil {
+	if err := e.applyPull(p); err != nil {
 		return fail(err)
 	}
-	fmt.Printf("stored %d variable(s) in %q\n", len(changes), item)
+	fmt.Printf("stored %d variable(s) in %q\n", len(p.Changes), p.Item)
 	return 0
 }
 
@@ -444,7 +387,7 @@ func (e *env) editItem(a *App, targets []*Target, item string, pushAfter bool) i
 		fmt.Println("not pushed; run `fleet push` when ready")
 		return 0
 	}
-	return e.push(a, targets, true, false, false, false)
+	return e.push(a, targets, true, false, false, false, defaultJobs)
 }
 
 func targetNames(ts []*Target) []string {

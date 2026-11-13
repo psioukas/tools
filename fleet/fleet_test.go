@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestDocSetKeepsStructure(t *testing.T) {
@@ -185,5 +187,32 @@ func TestDockerReloadDefaults(t *testing.T) {
 func TestShQuote(t *testing.T) {
 	if shQuote("a'b") != `'a'\''b'` || remotePath("~/x y") != `"$HOME"/'x y'` || remotePath("~") != `"$HOME"` {
 		t.Fatal("quoting")
+	}
+}
+
+func TestParallel(t *testing.T) {
+	var mu sync.Mutex
+	cur, max := 0, 0
+	got := make([]int, 20)
+	parallel(20, 3, func(i int) {
+		mu.Lock()
+		cur++
+		if cur > max {
+			max = cur
+		}
+		mu.Unlock()
+		time.Sleep(5 * time.Millisecond)
+		got[i] = i * 2
+		mu.Lock()
+		cur--
+		mu.Unlock()
+	})
+	if max > 3 || max < 2 {
+		t.Fatalf("concurrency %d, want 2..3", max)
+	}
+	for i, v := range got {
+		if v != i*2 {
+			t.Fatalf("slot %d not filled", i)
+		}
 	}
 }

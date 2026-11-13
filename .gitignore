@@ -3,3 +3,4 @@ bin/
 !*.env.template
 .env
 dist/
+.claude/worktrees/

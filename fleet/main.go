@@ -27,6 +27,7 @@ usage:
   fleet pull [-y] [-dry-run] APP TARGET
                                        import a target's variables into the vault
   fleet edit [-push] APP [TARGET]      edit the vault item with the arrow-key editor, then push
+  fleet agent init|run                 set up or run the agent daemon for hosts without ssh
 
 All commands take -f apps.yaml (default: ./apps.yaml, $FLEET_CONFIG, ~/.config/fleet/apps.yaml).
 Vault access goes through env-gen (FLEET_ENVGEN overrides its path); ssh through FLEET_SSH.
@@ -54,6 +55,8 @@ func main() {
 		code = cmdPull(args)
 	case "edit":
 		code = cmdEdit(args)
+	case "agent":
+		code = cmdAgent(args)
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	default:

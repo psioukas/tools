@@ -29,6 +29,7 @@ usage:
   fleet edit [-push] APP [TARGET]      edit the vault item with the arrow-key editor, then push
   fleet ui init | ui admin-init | ui -host H -trust-proxy
                                        web UI behind your HTTPS reverse proxy (see README)
+  fleet agent init|run                 set up or run the agent daemon for hosts without ssh
 
 All commands take -f apps.yaml (default: ./apps.yaml, $FLEET_CONFIG, ~/.config/fleet/apps.yaml).
 Vault access goes through env-gen (FLEET_ENVGEN overrides its path); ssh through FLEET_SSH.
@@ -58,6 +59,8 @@ func main() {
 		code = cmdEdit(args)
 	case "ui":
 		code = runUI(args)
+	case "agent":
+		code = cmdAgent(args)
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	default:

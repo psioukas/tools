@@ -120,4 +120,47 @@ A driver is one small interface in `driver.go`: `Describe`, `Read`, `Write` and 
 - ssh access (`ssh` on the PATH, or `FLEET_SSH=/path`), key-based: fleet runs ssh with `BatchMode=yes`. Remote hosts need a POSIX shell with `cat`, `cp`, `mv`.
 - `docker` CLI for docker targets.
 - Targets are looked at and written in parallel (4 at a time; `-j N` on `status`, `push` and `ui`). Tested on Linux only.
-- The first version has no agent: hosts that cannot take inbound ssh are not reachable yet (an agent driver would fit the same interface).
+- Hosts that cannot take inbound ssh need the agent driver (see "Agent driver" below), which itself needs inbound reachability.
+
+## Agent driver
+
+For hosts that run a small daemon instead of offering ssh. The agent is an HTTPS server (TLS 1.3 only) that can read and write a fixed list of files and run fixed, named reload commands. Standard library only.
+
+### Setup
+
+1. On the host: `fleet agent init -host agent.internal,10.0.0.9` (default dir `/etc/fleet-agent` as root, else `~/.config/fleet-agent`; `-force` overwrites). It prints the **token once** on stdout (only its SHA-256 goes into `agent.yaml`) and the **certificate fingerprint** on stderr. It creates a 0700 directory with `agent.yaml`, `cert.pem` (self-signed ECDSA P-256, 5 years, valid for the given names/IPs) and `key.pem` (0600).
+2. Edit `agent.yaml`, the only place that decides what the agent may touch:
+
+   ```yaml
+   listen: 10.0.0.9:8787          # default 127.0.0.1:8787; 0.0.0.0 and :: need `agent run -allow-public`
+   token_sha256: <written by init>
+   max_bytes: 1048576
+   allow: [/srv/shop/.env]        # exact absolute paths, no globs
+   reload:
+     shop: docker compose --project-directory /srv/shop up -d --force-recreate
+   ```
+
+3. Run it: `fleet agent run -config /etc/fleet-agent/agent.yaml` (use a systemd unit; it shuts down gracefully on SIGINT/SIGTERM and logs method, path, status and peer IP to stderr, never values or tokens).
+4. On the manager, give fleet the token without putting it in `apps.yaml`: either `export SHOP_AGENT_TOKEN=...` or save it to a file with mode 0600 or stricter (fleet refuses looser files). Then add a target:
+
+   ```yaml
+   targets:
+     vm-nossh:
+       driver: agent
+       agent_url: https://10.0.0.9:8787
+       agent_fingerprint: e2:80:93:3f:...   # from `agent init`; hex, colons and case are ignored
+       agent_token_env: SHOP_AGENT_TOKEN    # or agent_token_file: ~/.config/fleet/shop.token (exactly one)
+       file: /srv/shop/.env                 # must be in the agent's `allow`
+       reload: shop                         # the NAME of an agent `reload` command
+   ```
+
+Endpoints (all need `Authorization: Bearer TOKEN`): `GET /v1/health`, `GET|PUT /v1/file?path=P`, `POST /v1/reload {"name":"..."}` (60 s timeout, returns the exit code and the last 4 KiB of output). Writes are atomic (temp file in the same directory, fsync, rename), keep the previous file as `P.bak` with the same mode, create new files 0600 and keep the mode of existing ones.
+
+### Threat model
+
+- The manager pins the certificate fingerprint; there is no CA and no hostname check, so a mismatch fails closed before the token is sent.
+- The token is 32 random bytes, compared by hash in constant time; the agent stores only the hash. Failed auth gets a bare 401, and after 5 failures an IP is locked out for 10 minutes, doubling each time.
+- A stolen token can only touch the `allow`ed files and run the named `reload` commands; it cannot send a command or pick another path. Paths are cleaned and matched exactly, the final component must not be a symlink, and the resolved parent directory must be the one resolved at startup.
+- The agent listens inbound. Reachability must come from a private network such as WireGuard or Tailscale; do not expose it to the internet.
+- Hosts that can only make outbound connections are not covered (the agent does not poll a server).
+- Anyone who can edit `agent.yaml` or the reload commands on the host controls what the agent does; protect that directory (it is created 0700).

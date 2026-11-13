@@ -41,6 +41,12 @@ type Target struct {
 	ComposeDir string `yaml:"compose_dir"`
 	Service    string `yaml:"service"`
 
+	// agent driver (the token itself never goes in apps.yaml)
+	AgentURL         string `yaml:"agent_url"`
+	AgentFingerprint string `yaml:"agent_fingerprint"`
+	AgentTokenEnv    string `yaml:"agent_token_env"`
+	AgentTokenFile   string `yaml:"agent_token_file"`
+
 	app, name string
 }
 
@@ -120,8 +126,12 @@ func (t *Target) validate() error {
 		if t.Service != "" && t.ComposeDir == "" {
 			return fmt.Errorf("`service` needs `compose_dir`")
 		}
+	case "agent":
+		if err := t.validateAgent(); err != nil {
+			return err
+		}
 	default:
-		return fmt.Errorf("unknown driver %q (file | ssh | docker)", t.Driver)
+		return fmt.Errorf("unknown driver %q (file | ssh | docker | agent)", t.Driver)
 	}
 	for k := range t.Overrides {
 		if !keyRe.MatchString(k) {
